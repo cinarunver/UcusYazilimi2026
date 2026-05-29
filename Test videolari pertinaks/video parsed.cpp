@@ -41,7 +41,7 @@ float referans_basinc = 1013.25;
 #define TASK_STACK_SIZE 10000
 #define TASK1_PRIORITY 2
 #define TASK2_PRIORITY 1
-#define TELEMETRY_QUEUE_LEN 10
+#define TELEMETRY_QUEUE_LEN 100
 
 // Uçuş Durum Makinesi (State Machine)
 enum UcusDurumu {
