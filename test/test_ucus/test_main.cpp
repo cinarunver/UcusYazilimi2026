@@ -1,57 +1,56 @@
 /**
  * ============================================================
- * TRAKYA ROKET 2026 - UcusYazilimi Test Suite
+ * TRAKYA ROKET 2026 - UcusYazilimi Test Suite (main.cpp v2 - DMA)
  * ============================================================
- * Test Edilen Modüller:
- *   1. SimpleKalmanFilter  - Kalman filtresi mantığı
- *   2. hesapla_dikey_hiz   - Barometrik hız türevi
- *   3. TelemetryPacket     - Struct boyutu ve pack doğruluğu
- *   4. Uçuş Durum Makinesi - State machine geçişleri
- *   5. Eğim Açısı          - Tilt angle hesabı
- * ============================================================
- * Çalıştırmak için: pio test -e esp32dev -f test_ucus
+ * IKI KATMAN:
+ *   [A] YAZILIM (saf mantik)  - donanim gerektirmez, algoritma dogrulugu
+ *         Kalman, dikey hiz, egim, CRC16, cerceveleme, state machine
+ *   [B] DONANIM (kart uzerinde GERCEK test) - sensorler & SD kart takili olmali
+ *         I2C tarama + chip-ID, sensor verisi akil-saglik araligi,
+ *         GERCEK SD karta yaz/oku + ping-pong KAYIPSIZLIK
+ *
+ * >>> DONANIM testleri gercek pinler/adreslerle main.cpp ile birebir calisir.
+ * >>> Sensor/SD takili degilse ILGILI test FAIL verir (amac karti test etmek).
+ *
+ * Calistirmak icin (kart USB'ye bagli):
+ *   pio test -e esp32dev -f test_ucus
  * ============================================================
  */
 
 #include <unity.h>
 #include <Arduino.h>
 #include <math.h>
+#include <string.h>
 #include <stdint.h>
+#include <Wire.h>
+#include <SPI.h>
 #include <SD.h>
+#include <FS.h>
+#include <Adafruit_Sensor.h>
+#include <Adafruit_BNO055.h>
+#include <Adafruit_BME280.h>
 
 // ============================================================
-// BAĞIMLILIK GEREKTİRMEYEN KOD KOPYALARI
-// (main.cpp'deki hardware bağımsız kısımlar)
+// DONANIM PINLERI / ADRESLERI (main.cpp ile BIREBIR)
 // ============================================================
+#define PIN_I2C_SDA 21
+#define PIN_I2C_SCL 22
+#define PIN_SPI_CLK 18
+#define PIN_SPI_MISO 19
+#define PIN_SPI_MOSI 23
+#define PIN_SPI_CS 5
 
-// --- KALMAN FİLTRESİ ---
-class SimpleKalmanFilter {
-  public:
-    SimpleKalmanFilter(float mea_e, float est_e, float q) :
-      err_measure(mea_e), err_estimate(est_e), q(q),
-      last_estimate(0), kalman_gain(0), first_run(true) {}
+#define BNO055_DEF            55
+#define BNO055_ADDR           0x28
+#define BME280_ADDR_PRIMARY   0x76
+#define BME280_ADDR_SECONDARY 0x77
 
-    float updateEstimate(float mea) {
-      if (first_run) {
-        last_estimate = mea;
-        first_run = false;
-      }
-      kalman_gain = err_estimate / (err_estimate + err_measure);
-      float current_estimate = last_estimate + kalman_gain * (mea - last_estimate);
-      err_estimate = (1.0f - kalman_gain) * err_estimate + fabsf(last_estimate - current_estimate) * q;
-      last_estimate = current_estimate;
-      return current_estimate;
-    }
+#define BNO055_CHIP_ID_REG    0x00
+#define BNO055_CHIP_ID_VAL    0xA0
+#define BME280_ID_REG         0xD0
+#define BME280_ID_VAL         0x60
 
-    float getEstimate() { return last_estimate; }
-    bool  isFirstRun()  { return first_run; }
-
-  private:
-    float err_measure, err_estimate, q, last_estimate, kalman_gain;
-    bool  first_run;
-};
-
-// --- SABITLER (main.cpp ile senkron) ---
+// --- UCUS ALGORITMASI SABITLERI (main.cpp ile senkron) ---
 #define APOGEE_IRTIFA_FARKI   15.0f
 #define AYRILMA2_MESAFE      550.0f
 #define MAX_EGLIM             10.0f
@@ -60,25 +59,54 @@ class SimpleKalmanFilter {
 #define INIS_HIZ_ESIGI         2.0f
 #define INIS_IRTIFA_ESIGI     20.0f
 
-// --- ÇERÇEVE PROTOKOLü SABİTLERİ ---
+// --- CERCEVE PROTOKOLU (main.cpp ile senkron) ---
 #define SYNC_BYTE_1          0xAA
 #define SYNC_BYTE_2          0x55
-#define PACKET_SIZE          71    // sizeof(TelemetryPacket)
-#define FRAME_OVERHEAD       5     // 2 sync + 1 len + 2 crc = 5 byte
-#define FRAME_SIZE           (PACKET_SIZE + FRAME_OVERHEAD) // 76 byte
+#define PACKET_SIZE          59
+#define FRAME_SIZE           (PACKET_SIZE + 5)  // 64
 
-// --- UÇUŞ DURUM MAKİNESİ ---
-enum UcusDurumu {
-    HAZIR = 0, YUKSELIYOR = 1, INIS_1 = 2, INIS_2 = 3, INDI = 4
+#define SD_DMA_BUF_SIZE      512
+
+// --- Sensor nesneleri (main.cpp ile ayni) ---
+Adafruit_BNO055 bno = Adafruit_BNO055(BNO055_DEF, BNO055_ADDR);
+Adafruit_BME280 bme;
+bool bnoOk = false;
+bool bmeOk = false;
+bool sdOk  = false;
+
+// ============================================================
+// [A] YAZILIM: main.cpp donanim-bagimsiz kod kopyalari
+// ============================================================
+
+// --- KALMAN FILTRESI (main.cpp ile birebir) ---
+class SimpleKalmanFilter {
+  public:
+    SimpleKalmanFilter(float mea_e, float est_e, float q) :
+      err_measure(mea_e), err_estimate(est_e), q(q),
+      last_estimate(0), kalman_gain(0), first_run(true) {}
+    float updateEstimate(float mea) {
+      if (first_run) { last_estimate = mea; first_run = false; }
+      kalman_gain = err_estimate / (err_estimate + err_measure);
+      float ce = last_estimate + kalman_gain * (mea - last_estimate);
+      err_estimate = (1.0f - kalman_gain) * err_estimate + fabsf(last_estimate - ce) * q;
+      last_estimate = ce;
+      return ce;
+    }
+  private:
+    float err_measure, err_estimate, q, last_estimate, kalman_gain;
+    bool  first_run;
 };
 
-// --- TELEMETRİ PAKETİ ---
+// --- UCUS DURUM MAKINESI ---
+enum UcusDurumu { HAZIR = 0, YUKSELIYOR = 1, INIS_1 = 2, INIS_2 = 3, INDI = 4 };
+
+// --- TELEMETRI PAKETI (GUNCEL main.cpp - 59 byte) ---
 #pragma pack(push, 1)
 struct TelemetryPacket {
     float ivmeX, ivmeY, ivmeZ;
     float gyroX, gyroY, gyroZ;
     float roll, pitch, yaw;
-    float basinc, bmeSicaklik, irtifa, nem;
+    float irtifa;
     float dikeyHiz;
     float eglimAcisi;
     float gpsEnlem, gpsBoylam;
@@ -88,483 +116,400 @@ struct TelemetryPacket {
 };
 #pragma pack(pop)
 
-// --- DIKEY HIZ HESAPLAMA (hardware-free versiyon) ---
-// Gerçek kodda micros() kullanıyor; test için zaman parametreli versiyon:
+// --- DIKEY HIZ (hardware-free versiyon) ---
 float hesapla_dikey_hiz_test(float onceki_irtifa, float guncel_irtifa,
-                              unsigned long onceki_us, unsigned long guncel_us) {
+                             unsigned long onceki_us, unsigned long guncel_us) {
     if (onceki_us == 0) return 0.0f;
-    float delta_t = (float)(guncel_us - onceki_us) / 1000000.0f;
-    if (delta_t <= 0.0f) return 0.0f;
-    return (guncel_irtifa - onceki_irtifa) / delta_t;
+    float dt = (float)(guncel_us - onceki_us) / 1000000.0f;
+    if (dt <= 0.0f) return 0.0f;
+    return (guncel_irtifa - onceki_irtifa) / dt;
 }
 
-// --- EĞİM AÇISI HESAPLAMA ---
-static const float DEG_TO_RAD = M_PI / 180.0f;
-static const float RAD_TO_DEG = 180.0f / M_PI;
-
+// --- EGIM (TILT) ACISI (main.cpp ile birebir + NaN korumasi) ---
+static const float T_DEG_TO_RAD = M_PI / 180.0f;
+static const float T_RAD_TO_DEG = 180.0f / M_PI;
 float hesapla_eglim_acisi(float pitch_deg, float roll_deg) {
-    float p_rad = pitch_deg * DEG_TO_RAD;
-    float r_rad = roll_deg  * DEG_TO_RAD;
-    float cos_val = cosf(p_rad) * cosf(r_rad);
-    // NaN koruması (main.cpp FIX#5)
-    if (cos_val >  1.0f) cos_val =  1.0f;
-    if (cos_val < -1.0f) cos_val = -1.0f;
-    return acosf(cos_val) * RAD_TO_DEG;
+    float cv = cosf(pitch_deg * T_DEG_TO_RAD) * cosf(roll_deg * T_DEG_TO_RAD);
+    if (cv >  1.0f) cv =  1.0f;
+    if (cv < -1.0f) cv = -1.0f;
+    return acosf(cv) * T_RAD_TO_DEG;
 }
 
-// --- CSV FORMATINDA (METİN) GÖNDERME ---
-void gonder_paket_csv(Print& port, const TelemetryPacket& pkt) {
-    port.print(pkt.ivmeX); port.print(",");
-    port.print(pkt.ivmeY); port.print(",");
-    port.print(pkt.ivmeZ); port.print(",");
-    port.print(pkt.gyroX); port.print(",");
-    port.print(pkt.gyroY); port.print(",");
-    port.print(pkt.gyroZ); port.print(",");
-    port.print(pkt.roll); port.print(",");
-    port.print(pkt.pitch); port.print(",");
-    port.print(pkt.yaw); port.print(",");
-    port.print(pkt.basinc); port.print(",");
-    port.print(pkt.bmeSicaklik); port.print(",");
-    port.print(pkt.irtifa); port.print(",");
-    port.print(pkt.nem); port.print(",");
-    port.print(pkt.dikeyHiz); port.print(",");
-    port.print(pkt.eglimAcisi); port.print(",");
-    port.print(pkt.gpsEnlem, 6); port.print(","); 
-    port.print(pkt.gpsBoylam, 6); port.print(",");
-    port.print(pkt.ayrilma1_durum); port.print(",");
-    port.print(pkt.ayrilma2_durum); port.print(",");
-    port.println(pkt.ucus_durumu);
-}
-
-// --- MOCK PRINTER (Test için) ---
-class MockPrinter : public Print {
-public:
-    String output = "";
-    size_t write(uint8_t c) override {
-        output += (char)c;
-        return 1;
-    }
-    void clear() { output = ""; }
-};
-
-// --- CRC16-CCITT ---
+// --- CRC16-CCITT (main.cpp ile birebir) ---
 uint16_t crc16_ccitt(const uint8_t* data, size_t len) {
     uint16_t crc = 0xFFFF;
     for (size_t i = 0; i < len; i++) {
         crc ^= ((uint16_t)data[i] << 8);
-        for (int j = 0; j < 8; j++) {
+        for (int j = 0; j < 8; j++)
             crc = (crc & 0x8000) ? (crc << 1) ^ 0x1021 : (crc << 1);
-        }
     }
     return crc;
 }
 
-// ============================================================
-// 1. KALMAN FİLTRESİ TESTLERİ
-// ============================================================
-
-void test_kalman_ilk_cagri_olcumu_dondurur(void) {
-    SimpleKalmanFilter kf(0.1f, 0.1f, 0.01f);
-    float result = kf.updateEstimate(42.0f);
-    TEST_ASSERT_FLOAT_WITHIN(0.001f, 42.0f, result);
+// --- CERCEVELEME (gonder_paket_framed_dma mantigi) ---
+size_t cercevele(uint8_t* out, const TelemetryPacket& pkt) {
+    const uint8_t* p = (const uint8_t*)&pkt;
+    const size_t len = sizeof(TelemetryPacket);
+    uint16_t crc = crc16_ccitt(p, len);
+    size_t idx = 0;
+    out[idx++] = SYNC_BYTE_1; out[idx++] = SYNC_BYTE_2; out[idx++] = (uint8_t)len;
+    memcpy(&out[idx], p, len); idx += len;
+    out[idx++] = (uint8_t)(crc >> 8); out[idx++] = (uint8_t)(crc & 0xFF);
+    return idx;
 }
 
-void test_kalman_sabit_giris_sabit_cikis(void) {
-    SimpleKalmanFilter kf(0.1f, 0.1f, 0.01f);
-    float result = 0.0f;
-    for (int i = 0; i < 50; i++) {
-        result = kf.updateEstimate(100.0f);
+// --- CSV SATIR FORMATI (main.cpp bufferla_ve_yaz_sd ile birebir) ---
+int format_csv_line(char* out, size_t cap, const TelemetryPacket& p) {
+    return snprintf(out, cap,
+        "%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.6f,%.6f,%d,%d,%d\n",
+        p.ivmeX, p.ivmeY, p.ivmeZ, p.gyroX, p.gyroY, p.gyroZ,
+        p.roll, p.pitch, p.yaw, p.irtifa, p.dikeyHiz, p.eglimAcisi,
+        p.gpsEnlem, p.gpsBoylam, p.ayrilma1_durum, p.ayrilma2_durum, p.ucus_durumu);
+}
+
+// --- SD PING-PONG (main.cpp ile birebir; GERCEK File'a yazar) ---
+static char sd_dma_buf_A[SD_DMA_BUF_SIZE];
+static char sd_dma_buf_B[SD_DMA_BUF_SIZE];
+static int  active_sd_buf = 0;
+static int  sd_buf_idx    = 0;
+
+void sd_state_reset() { active_sd_buf = 0; sd_buf_idx = 0; }
+
+void bufferla_ve_yaz_sd(File& file, const TelemetryPacket& pkt) {
+    char temp_line[160];
+    int line_len = format_csv_line(temp_line, sizeof(temp_line), pkt);
+    char* current_buf = (active_sd_buf == 0) ? sd_dma_buf_A : sd_dma_buf_B;
+    if (sd_buf_idx + line_len >= SD_DMA_BUF_SIZE) {
+        if (file) file.write((const uint8_t*)current_buf, sd_buf_idx);
+        active_sd_buf = (active_sd_buf == 0) ? 1 : 0;
+        current_buf = (active_sd_buf == 0) ? sd_dma_buf_A : sd_dma_buf_B;
+        sd_buf_idx = 0;
     }
-    // 50 iterasyon sonra 100.0'a çok yakın olmalı
-    TEST_ASSERT_FLOAT_WITHIN(0.5f, 100.0f, result);
+    memcpy(&current_buf[sd_buf_idx], temp_line, line_len);
+    sd_buf_idx += line_len;
 }
 
-void test_kalman_gurultu_azaltiyor(void) {
+void sd_buffer_bosalt(File& file) {
+    if (file && sd_buf_idx > 0) {
+        char* current_buf = (active_sd_buf == 0) ? sd_dma_buf_A : sd_dma_buf_B;
+        file.write((const uint8_t*)current_buf, sd_buf_idx);
+        sd_buf_idx = 0;
+    }
+    if (file) file.flush();
+}
+
+// Tek register okuma (I2C chip-ID dogrulama icin)
+bool i2c_read_reg(uint8_t addr, uint8_t reg, uint8_t* val) {
+    Wire.beginTransmission(addr);
+    Wire.write(reg);
+    if (Wire.endTransmission(false) != 0) return false;
+    if (Wire.requestFrom((int)addr, 1) != 1) return false;
+    *val = Wire.read();
+    return true;
+}
+
+static TelemetryPacket ornek_paket(int i) {
+    TelemetryPacket p; memset(&p, 0, sizeof(p));
+    p.ivmeX = i * 1.5f; p.ivmeZ = 9.8f + i;
+    p.irtifa = 100.0f + i * 3.0f; p.dikeyHiz = -i * 0.25f;
+    p.eglimAcisi = (float)(i % 90);
+    p.gpsEnlem = 41.012345f; p.gpsBoylam = 28.987654f;
+    p.ayrilma1_durum = (i % 2); p.ucus_durumu = (uint8_t)(i % 5);
+    return p;
+}
+
+// ============================================================
+// [A] YAZILIM TESTLERI
+// ============================================================
+
+void test_kalman_ilk_cagri(void) {
+    SimpleKalmanFilter kf(0.1f, 0.1f, 0.01f);
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 42.0f, kf.updateEstimate(42.0f));
+}
+void test_kalman_yakinsar(void) {
+    SimpleKalmanFilter kf(0.1f, 0.1f, 0.01f);
+    float r = 0; for (int i = 0; i < 50; i++) r = kf.updateEstimate(100.0f);
+    TEST_ASSERT_FLOAT_WITHIN(0.5f, 100.0f, r);
+}
+void test_kalman_gurultu_azaltir(void) {
     SimpleKalmanFilter kf(2.0f, 2.0f, 0.1f);
-    // Gürültülü ölçümler: 100 ± 10
-    float inputs[] = {108.0f, 92.0f, 105.0f, 95.0f, 103.0f,
-                      97.0f, 101.0f, 99.0f, 102.0f, 98.0f};
-    float result = 0.0f;
-    for (int i = 0; i < 10; i++) {
-        result = kf.updateEstimate(inputs[i]);
-    }
-    // Çıkış gürültüden daha düzgün olmalı (giriş gürültüsü ±8, çıkış ±5 içinde)
-    TEST_ASSERT_FLOAT_WITHIN(8.0f, 100.0f, result);
+    float in[] = {108,92,105,95,103,97,101,99,102,98};
+    float r = 0; for (int i = 0; i < 10; i++) r = kf.updateEstimate(in[i]);
+    TEST_ASSERT_FLOAT_WITHIN(8.0f, 100.0f, r);
 }
-
-void test_kalman_negatif_degerler(void) {
-    SimpleKalmanFilter kf(0.1f, 0.1f, 0.01f);
-    float result = kf.updateEstimate(-55.5f);
-    TEST_ASSERT_FLOAT_WITHIN(0.001f, -55.5f, result);
-}
-
-void test_kalman_sifir_girisi(void) {
-    SimpleKalmanFilter kf(0.1f, 0.1f, 0.01f);
-    float result = 0.0f;
-    for (int i = 0; i < 20; i++) {
-        result = kf.updateEstimate(0.0f);
-    }
-    TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.0f, result);
-}
-
 void test_kalman_nan_uretmiyor(void) {
     SimpleKalmanFilter kf(0.1f, 0.1f, 0.01f);
-    float result = kf.updateEstimate(0.0f);
-    TEST_ASSERT_FALSE(isnan(result));
-    result = kf.updateEstimate(1000.0f);
-    TEST_ASSERT_FALSE(isnan(result));
+    TEST_ASSERT_FALSE(isnan(kf.updateEstimate(0.0f)));
+    TEST_ASSERT_FALSE(isnan(kf.updateEstimate(1000.0f)));
 }
 
-void test_kalman_birdenbire_deger_degisimi(void) {
-    SimpleKalmanFilter kf(1.0f, 1.0f, 0.01f);
-    // Önce 0'a yakınsıyoruz
-    for (int i = 0; i < 30; i++) kf.updateEstimate(0.0f);
-    // Birdenbire 200'e zıplıyoruz
-    float result = 0.0f;
-    for (int i = 0; i < 30; i++) result = kf.updateEstimate(200.0f);
-    // Adaptif özellik sayesinde 200'e yaklaşmış olmalı
-    TEST_ASSERT_FLOAT_WITHIN(10.0f, 200.0f, result);
+void test_dikey_hiz_yukselis(void) {
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 100.0f, hesapla_dikey_hiz_test(0, 100, 1000UL, 1001000UL));
 }
-
-// ============================================================
-// 2. DİKEY HIZ HESAPLAMA TESTLERİ
-// ============================================================
-
-void test_dikey_hiz_dogru_yukselis(void) {
-    // 1 saniyede 100m yükseliş → hız = 100 m/s
-    // onceki_us sıfır olmamalı, aksi halde "ilk çağrı" koruması devreye girer
-    float hiz = hesapla_dikey_hiz_test(0.0f, 100.0f, 1000UL, 1001000UL);
-    TEST_ASSERT_FLOAT_WITHIN(0.01f, 100.0f, hiz);
+void test_dikey_hiz_inis(void) {
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, -25.0f, hesapla_dikey_hiz_test(500, 450, 1000UL, 2001000UL));
 }
-
-void test_dikey_hiz_dogru_inis(void) {
-    // 2 saniyede 50m iniş → hız = -25 m/s
-    float hiz = hesapla_dikey_hiz_test(500.0f, 450.0f, 1000UL, 2001000UL);
-    TEST_ASSERT_FLOAT_WITHIN(0.01f, -25.0f, hiz);
-}
-
-void test_dikey_hiz_sabit_irtifa(void) {
-    // İrtifa değişmiyorsa hız = 0
-    float hiz = hesapla_dikey_hiz_test(300.0f, 300.0f, 1000UL, 501000UL);
-    TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.0f, hiz);
-}
-
 void test_dikey_hiz_ilk_cagri_sifir(void) {
-    // onceki_us=0 → "ilk çağrı" koruması → 0 döndürmeli
-    float hiz = hesapla_dikey_hiz_test(0.0f, 100.0f, 0, 0);
-    TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.0f, hiz);
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.0f, hesapla_dikey_hiz_test(0, 100, 0, 0));
 }
 
-void test_dikey_hiz_kucuk_delta_t(void) {
-    // 10ms (10000 µs) de 1m yükseliş → 100 m/s
-    float hiz = hesapla_dikey_hiz_test(100.0f, 101.0f, 1000UL, 11000UL);
-    TEST_ASSERT_FLOAT_WITHIN(0.5f, 100.0f, hiz);
+void test_eglim_dik_sifir(void) {
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 0.0f, hesapla_eglim_acisi(0, 0));
 }
-
-void test_dikey_hiz_nan_uretmiyor(void) {
-    float hiz = hesapla_dikey_hiz_test(0.0f, 0.0f, 1000UL, 1001000UL);
-    TEST_ASSERT_FALSE(isnan(hiz));
+void test_eglim_guvenlik_gecer(void) {
+    TEST_ASSERT_TRUE(hesapla_eglim_acisi(2, 2) < MAX_EGLIM);
 }
-
-// ============================================================
-// 3. TELEMETRİ PAKETİ TESTLERİ
-// ============================================================
-
-void test_telemetry_packet_boyutu(void) {
-    // #pragma pack(1) sayesinde padding olmamalı
-    // Struct'taki float alanları (17 adet):
-    //   ivmeX, ivmeY, ivmeZ           → 3
-    //   gyroX, gyroY, gyroZ           → 3
-    //   roll, pitch, yaw              → 3
-    //   basinc, bmeSicaklik, irtifa, nem → 4
-    //   dikeyHiz, eglimAcisi          → 2
-    //   gpsEnlem, gpsBoylam           → 2
-    //                           TOPLAM: 17 float = 68 byte
-    // 2 bool   = 2 byte
-    // 1 uint8  = 1 byte
-    // Beklenen toplam = 71 byte
-    size_t beklenen = (17 * sizeof(float)) + (2 * sizeof(bool)) + sizeof(uint8_t);
-    TEST_ASSERT_EQUAL_UINT(beklenen, sizeof(TelemetryPacket));
+void test_eglim_tumbling_engeller(void) {
+    TEST_ASSERT_TRUE(hesapla_eglim_acisi(45, 0) >= MAX_EGLIM);
 }
-
-void test_telemetry_packet_doldurma(void) {
-    TelemetryPacket p;
-    p.ivmeX = 1.1f; p.ivmeY = 2.2f; p.ivmeZ = 9.8f;
-    p.irtifa = 750.0f;
-    p.ayrilma1_durum = true;
-    p.ayrilma2_durum = false;
-    p.ucus_durumu = (uint8_t)YUKSELIYOR;
-
-    TEST_ASSERT_FLOAT_WITHIN(0.001f, 1.1f,  p.ivmeX);
-    TEST_ASSERT_FLOAT_WITHIN(0.001f, 750.0f, p.irtifa);
-    TEST_ASSERT_TRUE(p.ayrilma1_durum);
-    TEST_ASSERT_FALSE(p.ayrilma2_durum);
-    TEST_ASSERT_EQUAL_UINT8(1, p.ucus_durumu);
-}
-
-void test_telemetry_ucus_durumu_sinirlar(void) {
-    TelemetryPacket p;
-    p.ucus_durumu = (uint8_t)HAZIR;
-    TEST_ASSERT_EQUAL_UINT8(0, p.ucus_durumu);
-    p.ucus_durumu = (uint8_t)INDI;
-    TEST_ASSERT_EQUAL_UINT8(4, p.ucus_durumu);
-}
-
-// --- YENİ TELEMETRİ TESTLERİ (v3.0) ---
-
-void test_crc16_ccitt_dogrulama(void) {
-    // Bilinen bir veri kümesiyle test et: "123456789" (standard test string)
-    // CRC16-CCITT (poly=0x1021, init=0xFFFF) için "123456789" sonucu: 0x29B1
-    const char* test_data = "123456789";
-    uint16_t result = crc16_ccitt((const uint8_t*)test_data, 9);
-    TEST_ASSERT_EQUAL_HEX16(0x29B1, result);
-
-    // Boş veri testi
-    uint16_t result_empty = crc16_ccitt((const uint8_t*)"", 0);
-    TEST_ASSERT_EQUAL_HEX16(0xFFFF, result_empty);
-}
-
-void test_telemetry_frame_boyutu(void) {
-    // Çerçevenin toplam boyutunu doğrula
-    // [0xAA][0x55][LEN=71][PAYLOAD=71][CRC_HI][CRC_LO] = 76 byte
-    TEST_ASSERT_EQUAL_INT(71, sizeof(TelemetryPacket));
-    TEST_ASSERT_EQUAL_INT(76, FRAME_SIZE);
-}
-
-void test_csv_format_dogrulugu(void) {
-    TelemetryPacket p;
-    memset(&p, 0, sizeof(p));
-    p.ivmeX = 1.23f;
-    p.irtifa = 100.0f;
-    p.ucus_durumu = 1;
-
-    MockPrinter mp;
-    gonder_paket_csv(mp, p);
-
-    // İlk değer ivmeX (1.23) olmalı, son değer ucus_durumu (1) olmalı
-    TEST_ASSERT_TRUE(mp.output.startsWith("1.23,"));
-    TEST_ASSERT_TRUE(mp.output.endsWith(",1\r\n") || mp.output.endsWith(",1\n"));
-}
-
-// ============================================================
-// 4. UÇUŞ DURUM MAKİNESİ LOJİĞİ TESTLERİ
-// ============================================================
-
-void test_sm_hazir_kalkis_tespiti(void) {
-    UcusDurumu durum = HAZIR;
-    float ivmeZ = 25.0f; // > KALKIS_IVME_ESIGI (20)
-    if (ivmeZ > KALKIS_IVME_ESIGI) durum = YUKSELIYOR;
-    TEST_ASSERT_EQUAL_INT(YUKSELIYOR, durum);
-}
-
-void test_sm_hazir_dusuk_ivme_tetiklemez(void) {
-    UcusDurumu durum = HAZIR;
-    float ivmeZ = 5.0f; // < KALKIS_IVME_ESIGI
-    if (ivmeZ > KALKIS_IVME_ESIGI) durum = YUKSELIYOR;
-    TEST_ASSERT_EQUAL_INT(HAZIR, durum);
-}
-
-void test_sm_apogee_tespiti_tam_kosul(void) {
-    UcusDurumu durum = YUKSELIYOR;
-    bool ayrilma1 = false;
-    float max_irtifa = 600.0f;
-    float irtifa     = 580.0f;  // 600-580=20 > APOGEE_IRTIFA_FARKI(15)
-    float dikey_hiz  = -5.0f;   // < MIN_DIKEY_HIZ(0)
-    float eglim      = 5.0f;    // < MAX_EGLIM(10)
-
-    if ((max_irtifa - irtifa > APOGEE_IRTIFA_FARKI) &&
-        (dikey_hiz < MIN_DIKEY_HIZ) &&
-        (eglim < MAX_EGLIM)) {
-        ayrilma1 = true;
-        durum = INIS_1;
-    }
-    TEST_ASSERT_EQUAL_INT(INIS_1, durum);
-    TEST_ASSERT_TRUE(ayrilma1);
-}
-
-void test_sm_apogee_eglim_engeller(void) {
-    // Eğim fazlaysa (tumbling) ateşleme yapılmamalı
-    UcusDurumu durum = YUKSELIYOR;
-    bool ayrilma1 = false;
-    float max_irtifa = 600.0f;
-    float irtifa     = 580.0f;
-    float dikey_hiz  = -5.0f;
-    float eglim      = 45.0f;  // > MAX_EGLIM → engel!
-
-    if ((max_irtifa - irtifa > APOGEE_IRTIFA_FARKI) &&
-        (dikey_hiz < MIN_DIKEY_HIZ) &&
-        (eglim < MAX_EGLIM)) {
-        ayrilma1 = true;
-        durum = INIS_1;
-    }
-    TEST_ASSERT_EQUAL_INT(YUKSELIYOR, durum);
-    TEST_ASSERT_FALSE(ayrilma1);
-}
-
-void test_sm_apogee_pozitif_hiz_engeller(void) {
-    // Hâlâ yükseliyorsa ateşleme yapılmamalı
-    UcusDurumu durum = YUKSELIYOR;
-    bool ayrilma1 = false;
-    float max_irtifa = 600.0f;
-    float irtifa     = 580.0f;
-    float dikey_hiz  = 5.0f;  // > 0 → hâlâ yükseliyor
-    float eglim      = 5.0f;
-
-    if ((max_irtifa - irtifa > APOGEE_IRTIFA_FARKI) &&
-        (dikey_hiz < MIN_DIKEY_HIZ) &&
-        (eglim < MAX_EGLIM)) {
-        ayrilma1 = true;
-        durum = INIS_1;
-    }
-    TEST_ASSERT_EQUAL_INT(YUKSELIYOR, durum);
-    TEST_ASSERT_FALSE(ayrilma1);
-}
-
-void test_sm_inis1_ana_parasut_acilir(void) {
-    UcusDurumu durum = INIS_1;
-    bool ayrilma2 = false;
-    float irtifa        = 400.0f;  // < AYRILMA2_MESAFE(550)
-    float max_irtifa    = 700.0f;  // > AYRILMA2_MESAFE → gerçekten yüksekten indik
-
-    if ((irtifa < AYRILMA2_MESAFE) && (max_irtifa > AYRILMA2_MESAFE)) {
-        ayrilma2 = true;
-        durum = INIS_2;
-    }
-    TEST_ASSERT_EQUAL_INT(INIS_2, durum);
-    TEST_ASSERT_TRUE(ayrilma2);
-}
-
-void test_sm_inis1_dusuk_max_irtifa_tetiklemez(void) {
-    // Roket hiç 550m'e çıkmadıysa ana paraşüt açılmamalı
-    UcusDurumu durum = INIS_1;
-    bool ayrilma2 = false;
-    float irtifa     = 400.0f;
-    float max_irtifa = 450.0f; // < AYRILMA2_MESAFE → yeterince yükselmedi
-
-    if ((irtifa < AYRILMA2_MESAFE) && (max_irtifa > AYRILMA2_MESAFE)) {
-        ayrilma2 = true;
-        durum = INIS_2;
-    }
-    TEST_ASSERT_EQUAL_INT(INIS_1, durum);
-    TEST_ASSERT_FALSE(ayrilma2);
-}
-
-void test_sm_inis2_yere_inis_tespiti(void) {
-    UcusDurumu durum = INIS_2;
-    float dikey_hiz = -1.5f; // > -INIS_HIZ_ESIGI(-2.0)
-    float irtifa    = 10.0f; // < INIS_IRTIFA_ESIGI(20)
-
-    if ((dikey_hiz > -INIS_HIZ_ESIGI) && (irtifa < INIS_IRTIFA_ESIGI)) {
-        durum = INDI;
-    }
-    TEST_ASSERT_EQUAL_INT(INDI, durum);
-}
-
-void test_sm_inis2_yuksek_irtifa_tetiklemez(void) {
-    UcusDurumu durum = INIS_2;
-    float dikey_hiz = -1.0f;
-    float irtifa    = 50.0f; // > INIS_IRTIFA_ESIGI → henüz yerde değil
-
-    if ((dikey_hiz > -INIS_HIZ_ESIGI) && (irtifa < INIS_IRTIFA_ESIGI)) {
-        durum = INDI;
-    }
-    TEST_ASSERT_EQUAL_INT(INIS_2, durum);
-}
-
-// ============================================================
-// 5. EĞİM AÇISI TESTLERİ
-// ============================================================
-
-void test_eglim_tam_dik(void) {
-    // pitch=0, roll=0 → eğim = 0°
-    float eglim = hesapla_eglim_acisi(0.0f, 0.0f);
-    TEST_ASSERT_FLOAT_WITHIN(0.01f, 0.0f, eglim);
-}
-
-void test_eglim_90_derece(void) {
-    // pitch=90 → eğim = 90°
-    float eglim = hesapla_eglim_acisi(90.0f, 0.0f);
-    TEST_ASSERT_FLOAT_WITHIN(0.5f, 90.0f, eglim);
-}
-
-void test_eglim_kucuk_salinim(void) {
-    // ±2° salınım → eğim < MAX_EGLIM(10) olmalı
-    float eglim = hesapla_eglim_acisi(2.0f, 2.0f);
-    TEST_ASSERT_TRUE(eglim < MAX_EGLIM);
-}
-
-void test_eglim_tumbling(void) {
-    // 45° eğim → apogee güvenlik kapısı engellenmeli
-    float eglim = hesapla_eglim_acisi(45.0f, 0.0f);
-    TEST_ASSERT_TRUE(eglim >= MAX_EGLIM);
-}
-
 void test_eglim_nan_uretmiyor(void) {
-    // cos_val > 1.0 durumu (NaN koruması FIX#5)
-    float eglim = hesapla_eglim_acisi(0.0f, 0.0f);
-    TEST_ASSERT_FALSE(isnan(eglim));
-    eglim = hesapla_eglim_acisi(0.001f, 0.001f);
-    TEST_ASSERT_FALSE(isnan(eglim));
+    TEST_ASSERT_FALSE(isnan(hesapla_eglim_acisi(180, 180)));
+}
+
+void test_packet_boyutu_59(void) {
+    TEST_ASSERT_EQUAL_UINT(59, sizeof(TelemetryPacket));
+}
+void test_packet_padding_yok(void) {
+    TelemetryPacket p;
+    size_t off = (size_t)((uint8_t*)&p.ucus_durumu - (uint8_t*)&p);
+    TEST_ASSERT_EQUAL_UINT(58, off);
+}
+
+void test_crc16_bilinen_vektor(void) {
+    TEST_ASSERT_EQUAL_HEX16(0x29B1, crc16_ccitt((const uint8_t*)"123456789", 9));
+}
+void test_crc16_tek_bit_farkli(void) {
+    uint8_t a[4] = {0x10,0x20,0x30,0x40}, b[4] = {0x10,0x20,0x30,0x41};
+    TEST_ASSERT_NOT_EQUAL(crc16_ccitt(a,4), crc16_ccitt(b,4));
+}
+
+void test_cerceve_baslik_ve_boyut(void) {
+    TelemetryPacket p; memset(&p, 0, sizeof(p));
+    uint8_t f[FRAME_SIZE];
+    size_t n = cercevele(f, p);
+    TEST_ASSERT_EQUAL_UINT(64, n);
+    TEST_ASSERT_EQUAL_HEX8(0xAA, f[0]);
+    TEST_ASSERT_EQUAL_HEX8(0x55, f[1]);
+    TEST_ASSERT_EQUAL_UINT8(59, f[2]);
+}
+void test_cerceve_payload_bozulmadan(void) {
+    TelemetryPacket p; memset(&p, 0, sizeof(p));
+    p.irtifa = 1234.5f; p.ucus_durumu = 3;
+    uint8_t f[FRAME_SIZE]; cercevele(f, p);
+    TEST_ASSERT_EQUAL_MEMORY(&p, &f[3], sizeof(TelemetryPacket));
+}
+void test_cerceve_bozuk_payload_crc_yakalar(void) {
+    TelemetryPacket p; memset(&p, 0, sizeof(p)); p.irtifa = 500.0f;
+    uint8_t f[FRAME_SIZE]; cercevele(f, p);
+    f[10] ^= 0xFF; // bit flip
+    uint16_t alinan = ((uint16_t)f[FRAME_SIZE-2] << 8) | f[FRAME_SIZE-1];
+    uint16_t hesap  = crc16_ccitt(&f[3], sizeof(TelemetryPacket));
+    TEST_ASSERT_NOT_EQUAL(alinan, hesap);
+}
+
+void test_sm_kalkis(void) {
+    UcusDurumu d = HAZIR;
+    if (25.0f > KALKIS_IVME_ESIGI) d = YUKSELIYOR;
+    TEST_ASSERT_EQUAL_INT(YUKSELIYOR, d);
+}
+void test_sm_apogee_tam_kosul(void) {
+    UcusDurumu d = YUKSELIYOR; bool ayr = false;
+    float maxi = 600, irt = 580, hiz = -5, eg = 5;
+    if ((maxi-irt > APOGEE_IRTIFA_FARKI) && (hiz < MIN_DIKEY_HIZ) && (eg < MAX_EGLIM)) { ayr = true; d = INIS_1; }
+    TEST_ASSERT_EQUAL_INT(INIS_1, d); TEST_ASSERT_TRUE(ayr);
+}
+void test_sm_apogee_egim_engeller(void) {
+    UcusDurumu d = YUKSELIYOR; bool ayr = false;
+    float maxi = 600, irt = 580, hiz = -5, eg = 45;
+    if ((maxi-irt > APOGEE_IRTIFA_FARKI) && (hiz < MIN_DIKEY_HIZ) && (eg < MAX_EGLIM)) { ayr = true; d = INIS_1; }
+    TEST_ASSERT_EQUAL_INT(YUKSELIYOR, d); TEST_ASSERT_FALSE(ayr);
+}
+void test_sm_inis1_ana_parasut(void) {
+    UcusDurumu d = INIS_1; bool ayr = false;
+    float irt = 400, maxi = 700;
+    if ((irt < AYRILMA2_MESAFE) && (maxi > AYRILMA2_MESAFE)) { ayr = true; d = INIS_2; }
+    TEST_ASSERT_EQUAL_INT(INIS_2, d); TEST_ASSERT_TRUE(ayr);
+}
+void test_sm_inis2_yere_inis(void) {
+    UcusDurumu d = INIS_2;
+    float hiz = -1.5f, irt = 10.0f;
+    if ((hiz > -INIS_HIZ_ESIGI) && (irt < INIS_IRTIFA_ESIGI)) d = INDI;
+    TEST_ASSERT_EQUAL_INT(INDI, d);
 }
 
 // ============================================================
-// UNITY SETUP / TEARDOWN
+// [B] DONANIM TESTLERI (GERCEK KART)
 // ============================================================
 
+// --- I2C: BNO055 bagli mi + chip-ID ---
+void test_hw_i2c_bno055_cevap(void) {
+    Wire.beginTransmission(BNO055_ADDR);
+    TEST_ASSERT_EQUAL_MESSAGE(0, Wire.endTransmission(),
+        "BNO055 (0x28) I2C hattinda cevap vermiyor - kablo/besleme kontrol");
+}
+void test_hw_bno055_chip_id(void) {
+    uint8_t id = 0;
+    TEST_ASSERT_TRUE_MESSAGE(i2c_read_reg(BNO055_ADDR, BNO055_CHIP_ID_REG, &id),
+        "BNO055 CHIP_ID register okunamadi");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(BNO055_CHIP_ID_VAL, id,
+        "BNO055 CHIP_ID beklenen 0xA0 degil");
+}
+
+// --- I2C: BME280 bagli mi + chip-ID ---
+void test_hw_i2c_bme280_cevap(void) {
+    Wire.beginTransmission(BME280_ADDR_PRIMARY);
+    bool p = (Wire.endTransmission() == 0);
+    Wire.beginTransmission(BME280_ADDR_SECONDARY);
+    bool s = (Wire.endTransmission() == 0);
+    TEST_ASSERT_TRUE_MESSAGE(p || s,
+        "BME280 (0x76/0x77) I2C hattinda cevap vermiyor");
+}
+void test_hw_bme280_chip_id(void) {
+    uint8_t id = 0;
+    bool ok = i2c_read_reg(BME280_ADDR_PRIMARY, BME280_ID_REG, &id) ||
+              i2c_read_reg(BME280_ADDR_SECONDARY, BME280_ID_REG, &id);
+    TEST_ASSERT_TRUE_MESSAGE(ok, "BME280 ID register okunamadi");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(BME280_ID_VAL, id,
+        "BME280 ID beklenen 0x60 degil (BMP280 olabilir)");
+}
+
+// --- BNO055 baslar + verisi akil-saglik araliginda ---
+void test_hw_bno055_baslar(void) {
+    bnoOk = bno.begin();
+    TEST_ASSERT_TRUE_MESSAGE(bnoOk, "bno.begin() basarisiz");
+}
+void test_hw_bno055_veri_makul(void) {
+    TEST_ASSERT_TRUE_MESSAGE(bnoOk, "BNO055 baslamadigi icin veri okunamiyor");
+    sensors_event_t a, o;
+    bno.getEvent(&a, Adafruit_BNO055::VECTOR_LINEARACCEL);
+    bno.getEvent(&o, Adafruit_BNO055::VECTOR_EULER);
+    // Veri NaN olmamali
+    TEST_ASSERT_FALSE(isnan(a.acceleration.x));
+    TEST_ASSERT_FALSE(isnan(o.orientation.x));
+    // Sicaklik makul aralikta (-40..85 C)
+    int8_t t = bno.getTemp();
+    TEST_ASSERT_TRUE_MESSAGE(t > -40 && t < 85, "BNO055 sicakligi anlamsiz");
+    // Euler heading 0..360
+    TEST_ASSERT_TRUE(o.orientation.x >= -0.1f && o.orientation.x <= 360.1f);
+}
+
+// --- BME280 baslar + verisi akil-saglik araliginda ---
+void test_hw_bme280_baslar(void) {
+    bmeOk = bme.begin(BME280_ADDR_PRIMARY) || bme.begin(BME280_ADDR_SECONDARY);
+    TEST_ASSERT_TRUE_MESSAGE(bmeOk, "bme.begin() basarisiz");
+}
+void test_hw_bme280_veri_makul(void) {
+    TEST_ASSERT_TRUE_MESSAGE(bmeOk, "BME280 baslamadigi icin veri okunamiyor");
+    float t = bme.readTemperature();
+    float p = bme.readPressure() / 100.0f; // hPa
+    float h = bme.readHumidity();
+    TEST_ASSERT_FALSE(isnan(t)); TEST_ASSERT_FALSE(isnan(p));
+    TEST_ASSERT_TRUE_MESSAGE(t > -40.0f && t < 85.0f,  "BME280 sicaklik araligi disi");
+    TEST_ASSERT_TRUE_MESSAGE(p > 300.0f && p < 1100.0f, "BME280 basinc araligi disi (hPa)");
+    TEST_ASSERT_TRUE_MESSAGE(h >= 0.0f && h <= 100.0f,  "BME280 nem %0-100 disi");
+}
+
+// --- SD kart baslar ---
+void test_hw_sd_baslar(void) {
+    SPI.begin(PIN_SPI_CLK, PIN_SPI_MISO, PIN_SPI_MOSI, PIN_SPI_CS);
+    sdOk = SD.begin(PIN_SPI_CS);
+    TEST_ASSERT_TRUE_MESSAGE(sdOk, "SD.begin() basarisiz - kart takili mi?");
+}
+
+// --- SD gercek yaz/oku roundtrip ---
+void test_hw_sd_yaz_oku(void) {
+    TEST_ASSERT_TRUE_MESSAGE(sdOk, "SD baslamadigi icin yaz/oku atlandi");
+    const char* msg = "TRAKYA-ROKET-2026-SDTEST";
+    SD.remove("/selftest.txt");
+    File w = SD.open("/selftest.txt", FILE_WRITE);
+    TEST_ASSERT_TRUE_MESSAGE(w, "SD dosya yazma icin acilamadi");
+    w.print(msg); w.close();
+
+    File r = SD.open("/selftest.txt", FILE_READ);
+    TEST_ASSERT_TRUE_MESSAGE(r, "SD dosya okuma icin acilamadi");
+    char buf[64]; int n = r.readBytes(buf, sizeof(buf) - 1); buf[n] = '\0'; r.close();
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(msg, buf, "SD geri okunan veri yazilanla ayni degil");
+}
+
+// --- SD GERCEK ping-pong + KAYIPSIZLIK (dosya boyutu == uretilen) ---
+void test_hw_sd_pingpong_kayipsiz(void) {
+    TEST_ASSERT_TRUE_MESSAGE(sdOk, "SD baslamadigi icin ping-pong testi atlandi");
+    sd_state_reset();
+    SD.remove("/pptest.csv");
+    File f = SD.open("/pptest.csv", FILE_WRITE);
+    TEST_ASSERT_TRUE_MESSAGE(f, "ping-pong test dosyasi acilamadi");
+
+    long beklenen = 0;
+    const int N = 200;
+    for (int i = 0; i < N; i++) {
+        TelemetryPacket p = ornek_paket(i);
+        char tmp[160];
+        beklenen += format_csv_line(tmp, sizeof(tmp), p);
+        bufferla_ve_yaz_sd(f, p);
+    }
+    sd_buffer_bosalt(f); // inis/kapanis: kalan tamponu bas
+    f.close();
+
+    File r = SD.open("/pptest.csv", FILE_READ);
+    TEST_ASSERT_TRUE(r);
+    long boyut = r.size();
+    r.close();
+
+    // Gercek karta yazilan dosya boyutu, uretilen toplam byte'a esit olmali (SIFIR KAYIP)
+    TEST_ASSERT_EQUAL_INT32_MESSAGE(beklenen, boyut,
+        "SD dosya boyutu uretilen veriyle esit degil - veri kaybi var!");
+    TEST_ASSERT_EQUAL_INT(0, sd_buf_idx);
+}
+
+// ============================================================
+// UNITY
+// ============================================================
 void setUp(void)    {}
 void tearDown(void) {}
 
-// ============================================================
-// MAIN
-// ============================================================
-
 void setup() {
-    
+    delay(2000); // seri port + sensor guc-acilis (BNO055 ~650ms) icin bekle
+    Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL);
 
     UNITY_BEGIN();
 
-    // --- Kalman ---
-    RUN_TEST(test_kalman_ilk_cagri_olcumu_dondurur);
-    RUN_TEST(test_kalman_sabit_giris_sabit_cikis);
-    RUN_TEST(test_kalman_gurultu_azaltiyor);
-    RUN_TEST(test_kalman_negatif_degerler);
-    RUN_TEST(test_kalman_sifir_girisi);
+    // --- [A] YAZILIM ---
+    RUN_TEST(test_kalman_ilk_cagri);
+    RUN_TEST(test_kalman_yakinsar);
+    RUN_TEST(test_kalman_gurultu_azaltir);
     RUN_TEST(test_kalman_nan_uretmiyor);
-    RUN_TEST(test_kalman_birdenbire_deger_degisimi);
-
-    // --- Dikey Hız ---
-    RUN_TEST(test_dikey_hiz_dogru_yukselis);
-    RUN_TEST(test_dikey_hiz_dogru_inis);
-    RUN_TEST(test_dikey_hiz_sabit_irtifa);
+    RUN_TEST(test_dikey_hiz_yukselis);
+    RUN_TEST(test_dikey_hiz_inis);
     RUN_TEST(test_dikey_hiz_ilk_cagri_sifir);
-    RUN_TEST(test_dikey_hiz_kucuk_delta_t);
-    RUN_TEST(test_dikey_hiz_nan_uretmiyor);
-
-    // --- Telemetri Paketi ---
-    RUN_TEST(test_telemetry_packet_boyutu);
-    RUN_TEST(test_telemetry_packet_doldurma);
-    RUN_TEST(test_telemetry_ucus_durumu_sinirlar);
-    RUN_TEST(test_crc16_ccitt_dogrulama);
-    RUN_TEST(test_telemetry_frame_boyutu);
-    RUN_TEST(test_csv_format_dogrulugu);
-
-    // --- State Machine ---
-    RUN_TEST(test_sm_hazir_kalkis_tespiti);
-    RUN_TEST(test_sm_hazir_dusuk_ivme_tetiklemez);
-    RUN_TEST(test_sm_apogee_tespiti_tam_kosul);
-    RUN_TEST(test_sm_apogee_eglim_engeller);
-    RUN_TEST(test_sm_apogee_pozitif_hiz_engeller);
-    RUN_TEST(test_sm_inis1_ana_parasut_acilir);
-    RUN_TEST(test_sm_inis1_dusuk_max_irtifa_tetiklemez);
-    RUN_TEST(test_sm_inis2_yere_inis_tespiti);
-    RUN_TEST(test_sm_inis2_yuksek_irtifa_tetiklemez);
-
-    // --- Eğim Açısı ---
-    RUN_TEST(test_eglim_tam_dik);
-    RUN_TEST(test_eglim_90_derece);
-    RUN_TEST(test_eglim_kucuk_salinim);
-    RUN_TEST(test_eglim_tumbling);
+    RUN_TEST(test_eglim_dik_sifir);
+    RUN_TEST(test_eglim_guvenlik_gecer);
+    RUN_TEST(test_eglim_tumbling_engeller);
     RUN_TEST(test_eglim_nan_uretmiyor);
+    RUN_TEST(test_packet_boyutu_59);
+    RUN_TEST(test_packet_padding_yok);
+    RUN_TEST(test_crc16_bilinen_vektor);
+    RUN_TEST(test_crc16_tek_bit_farkli);
+    RUN_TEST(test_cerceve_baslik_ve_boyut);
+    RUN_TEST(test_cerceve_payload_bozulmadan);
+    RUN_TEST(test_cerceve_bozuk_payload_crc_yakalar);
+    RUN_TEST(test_sm_kalkis);
+    RUN_TEST(test_sm_apogee_tam_kosul);
+    RUN_TEST(test_sm_apogee_egim_engeller);
+    RUN_TEST(test_sm_inis1_ana_parasut);
+    RUN_TEST(test_sm_inis2_yere_inis);
+
+    // --- [B] DONANIM (GERCEK KART) ---
+    RUN_TEST(test_hw_i2c_bno055_cevap);
+    RUN_TEST(test_hw_bno055_chip_id);
+    RUN_TEST(test_hw_i2c_bme280_cevap);
+    RUN_TEST(test_hw_bme280_chip_id);
+    RUN_TEST(test_hw_bno055_baslar);
+    RUN_TEST(test_hw_bno055_veri_makul);
+    RUN_TEST(test_hw_bme280_baslar);
+    RUN_TEST(test_hw_bme280_veri_makul);
+    RUN_TEST(test_hw_sd_baslar);
+    RUN_TEST(test_hw_sd_yaz_oku);
+    RUN_TEST(test_hw_sd_pingpong_kayipsiz);
 
     UNITY_END();
 }

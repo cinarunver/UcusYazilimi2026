@@ -18,6 +18,7 @@
   - [x] Uçuş Algoritması (Apogee tespiti, serbest düşüş anlama vb.)
   - [x] Fünye (Ateşleme) Kontrollerinin durum makinesi (State Machine) ile yapılması
   - [x] Kalibrasyon ve Başlangıç İrtifası / Basıncı referans alımı
+  - [ ] İletimdeki paket optimize edilecek. Bit kayması ve CRC kontrolü ile güvenlik sağlanacak. 
   - [ ] BNO055 Z-Ekseni Yön Kalibrasyonu (Şu an Z ekseni yukarı varsayılıyor, doğrulanmalı!)
 
   [ CORE 1 (Haberleşme & Çevre Birimleri) ]
