@@ -9,7 +9,33 @@
 #include <FS.h>
 #include "driver/uart.h"      // DMA destekli UART sürücüsü
 #include "esp_heap_caps.h"    // DMA uyumlu bellek yönetimi
+
+// ============================================================
+//  >>> YARISMA ALANI - LORA ADRES & KANAL AYARLARI <<<
+//  E32-433T30D parametreleri. Yarisma alaninda SADECE buradan ayarla.
+//  ONEMLI: UKB (main) ile Gorev Yuku FARKLI kanalda olmali (RF cakismasi)!
+//  Frekans (MHz) = 410 + LORA_CHAN   (CHAN: 0x00..0x1F ; 0x17 = 433 MHz)
+// ============================================================
+#define LORA_ADDH    0x00   // Adres yuksek byte
+#define LORA_ADDL    0x01   // Adres dusuk byte
+#define LORA_CHAN    0x16   // Kanal (Gorev Yuku'nden FARKLI sec!) frekans=410+CHAN MHz
+#define LORA_SPED    0x1C   // UART 9600 8N1 + hava hizi (degistirmeyin)
+#define LORA_OPTION  0xC4   // TX gucu / opsiyon byte
+
 /*
+================================================================================
+  NOT: KALMAN İRTİFA AYARI (kf_irtifa = 16.3, 264, 0.1112)
+================================================================================
+  e_mea=16.3 olculen BME irtifa gurultusune gore secildi (eski: 1.5).
+  e_est=264 sadece baslangic, birkac ornekte kendini duzeltir (onemsiz).
+  ORAN e_mea/q ≈ 148 (eski ~15) -> COK daha agir yumusatma = irtifada LAG.
+  Etki: irtifa filtreli sinyali gercegin ~0.1-0.4 sn gerisinden takip eder.
+  APOGEE'ye etkisi (gecikme yonunde!):
+    - Tasarimsal 15m esigi zaten ~1.75 sn geciktiriyor (filtreyle ilgisiz).
+    - Filtre lag'i bunun UZERINE ~0.1-0.4 sn / ~1-6 m ekler.
+    - Toplam: drogue apogee'nin ~16-21 m altinda, tepeden ~1.8-2.2 sn sonra.
+  YAPILACAK: SUT (3000m cik-dus senaryosu) ile apogee gecikmesini olc.
+  Fazla gelirse q'yu 0.11->0.3 yap (lag ~yariya iner, gurultu biraz artar).
 ================================================================================
   YAPILACAKLAR LİSTESİ (TODO & MİMARİ PLAN)
 ================================================================================
@@ -20,6 +46,7 @@
   - [x] Kalibrasyon ve Başlangıç İrtifası / Basıncı referans alımı
   - [ ] İletimdeki paket optimize edilecek. Bit kayması ve CRC kontrolü ile güvenlik sağlanacak. 
   - [ ] BNO055 Z-Ekseni Yön Kalibrasyonu (Şu an Z ekseni yukarı varsayılıyor, doğrulanmalı!)
+  - [ ] Kalman fine-tuning: ivme, gyro, irtifa, sıcaklık, nem için ayrı ayrı parametreler
 
   [ CORE 1 (Haberleşme & Çevre Birimleri) ]
    - [x] LoRa üzerinden Non-Blocking Veri Aktarımı
@@ -197,20 +224,18 @@ class SimpleKalmanFilter {
 
 // --- KALMAN FİLTRESİ NESNELERİ ---
 // Parametreler: (Ölçüm Hatası, Tahmin Hatası, Süreç Gürültüsü)
-SimpleKalmanFilter kf_ivmeX(0.1, 0.1, 0.01);
-SimpleKalmanFilter kf_ivmeY(0.1, 0.1, 0.01);
-SimpleKalmanFilter kf_ivmeZ(0.1, 0.1, 0.01);
-SimpleKalmanFilter kf_gyroX(0.1, 0.1, 0.01);
-SimpleKalmanFilter kf_gyroY(0.1, 0.1, 0.01);
-SimpleKalmanFilter kf_gyroZ(0.1, 0.1, 0.01);
-SimpleKalmanFilter kf_roll(0.1, 0.1, 0.01);
-SimpleKalmanFilter kf_pitch(0.1, 0.1, 0.01);
-SimpleKalmanFilter kf_yaw(0.1, 0.1, 0.01);
+SimpleKalmanFilter kf_ivmeX(2.906, 9.982, 0.3884);
+SimpleKalmanFilter kf_ivmeY(2.906, 9.982, 0.3884);
+SimpleKalmanFilter kf_ivmeZ(2.906, 9.982, 0.3884);
+SimpleKalmanFilter kf_gyroX(2.906, 9.982, 0.3884);
+SimpleKalmanFilter kf_gyroY(2.906, 9.982, 0.3884);
+SimpleKalmanFilter kf_gyroZ(2.906, 9.982, 0.3884);
+SimpleKalmanFilter kf_roll(2.906, 9.982, 0.3884);
+SimpleKalmanFilter kf_pitch(2.906, 9.982, 0.3884);
+SimpleKalmanFilter kf_yaw(2.906, 9.982, 0.3884);
 
-SimpleKalmanFilter kf_basinc(2.0, 2.0, 0.1);
-SimpleKalmanFilter kf_bmeSicaklik(0.5, 0.5, 0.01);
-SimpleKalmanFilter kf_irtifa(1.5, 1.5, 0.1);
-SimpleKalmanFilter kf_nem(1.0, 1.0, 0.1);
+// Sadece irtifa filtreleniyor (basinc/sicaklik/nem okunmuyor)
+SimpleKalmanFilter kf_irtifa(16.3, 264, 0.1112); // olculen BME irtifa gurultusune gore (e_mea, e_est, q)
 
 // --- SENSÖR NESNELERİ ---
 Adafruit_BNO055 bno = Adafruit_BNO055(BNO055_DEF, BNO055_ADDR); 
@@ -225,7 +250,7 @@ float gyroX = 0.0, gyroY = 0.0, gyroZ = 0.0;
 float roll = 0.0, pitch = 0.0, yaw = 0.0; 
 
 // Barometre (BME280) Verileri
-float basinc = 0.0, bmeSicaklik = 0.0, irtifa = 0.0, nem = 0.0;
+float irtifa = 0.0; // basinc/bmeSicaklik/nem kullanilmadigi icin kaldirildi
 
 // GPS Verileri
 float gpsEnlem = 0.0, gpsBoylam = 0.0;
@@ -409,10 +434,11 @@ void gonder_paket_framed_dma(uart_port_t uart_num, const TelemetryPacket& pkt) {
 // --- E32-433T30D LORA MODUL KONFIGURASYONU ---
 // Modul once config moduna alinir (M0=1, M1=1), parametre paketi UART1'e yazilir,
 // ardindan normal (transparan) moda (M0=0, M1=0) geri donulur.
-// Config paketi: {0xC0=kalici kaydet, ADDH=0x00, ADDL=0x01, SPED=0x1C, CHAN=0x16, OPTION=0xC4}
+// Config paketi: {0xC0=kalici kaydet, ADDH, ADDL, SPED, CHAN, OPTION}
+// Parametreler en bastaki YARISMA ALANI define blogundan gelir.
 // NOT: Config modunda E32 her zaman 9600 8N1 haberlesir — UART1 zaten bu ayarda.
 void lora_konfigurasyon() {
-    static const uint8_t configPacket[6] = {0xC0, 0x00, 0x01, 0x1C, 0x16, 0xC4};
+    static const uint8_t configPacket[6] = {0xC0, LORA_ADDH, LORA_ADDL, LORA_SPED, LORA_CHAN, LORA_OPTION};
 
     // 1. Config moduna gec: M0=1, M1=1
     digitalWrite(LORA_M0, HIGH);
@@ -482,10 +508,9 @@ void Task1code(void *pvParameters) {
     cos_val = constrain(cos_val, -1.0f, 1.0f);
     eglim_acisi = acos(cos_val) * RAD_TO_DEG;
 
-    // 2. Barometre (BME280) Verilerini Okuma
-    bmeSicaklik = kf_bmeSicaklik.updateEstimate(bme.readTemperature());
-    basinc = kf_basinc.updateEstimate(bme.readPressure());
-    nem = kf_nem.updateEstimate(bme.readHumidity());
+    // 2. Barometre (BME280) — SADECE irtifa okunur.
+    // basinc/sicaklik/nem pakette de algoritmada da kullanilmiyor; her dongude
+    // bosuna I2C okumasi yapmamak icin okunmuyorlar (100 Hz'de 3 okuma tasarrufu).
     // referans_basinc: setup() içinde BME280'den otomatik kalibre edildi
     irtifa = kf_irtifa.updateEstimate(bme.readAltitude(referans_basinc));
 
@@ -717,22 +742,27 @@ void setup() {
         }
     }
 
-    // Sensör Başlatma İşlemleri
-    if (!bno.begin()) {
+    // Sensör Başlatma İşlemleri — IMU modu (0x08): accel+gyro fusion (mag yok).
+    // Roket icin ideal: mag kalibrasyonu beklemez, motor/metal yaninda saglam;
+    // ayrica klon modullerde NDOF'un 0000 vermesi sorununu da onler.
+    if (!bno.begin(OPERATION_MODE_IMUPLUS)) {
         lora_log("KRITIK: BNO055 bulunamadi! Sistem durduruluyor.");
         while(true) { vTaskDelay(1000 / portTICK_PERIOD_MS); }
     }
-    lora_log("BNO055 baslatildi.");
-    // BNO055'i harici kristal kullanmaya ayarlamak okumaları daha stabil yapar
-    // bno.setExtCrystalUse(true);
+    lora_log("BNO055 baslatildi (IMU mode 0x08).");
+    // NOT: setExtCrystalUse KULLANILMAZ — klon modulde harici kristal yok
+    // (true yapmak fusion cikisini 0000'a dusurur).
 
-    // BNO055 Kalibrasyon Kalitesi Bekleme
-    // begin() başarılı olsa bile kalibrasyon dakikalar alabilir.
-    // Kalibre olmamış sensorden apogee kararı vermek tehlikelidir.
-    lora_log("BNO055 kalibrasyonu bekleniyor...");
+    // BNO055 Kalibrasyon Kalitesi Bekleme (TIMEOUT'lu)
+    // begin() başarılı olsa bile kalibrasyon zaman alabilir; ancak rampada sabit
+    // beklerken sonsuza kilitlenmemek icin ~15 sn timeout var. Sure dolarsa devam eder.
+    lora_log("BNO055 kalibrasyonu bekleniyor (max ~15sn)...");
     {
         uint8_t cal_sys = 0, cal_gyro = 0, cal_accel = 0, cal_mag = 0;
-        while (cal_sys < BNO055_MIN_KALIBRASYON) {
+        unsigned long kal_baslangic = millis();
+        const unsigned long KAL_TIMEOUT_MS = 15000;
+        while (cal_sys < BNO055_MIN_KALIBRASYON &&
+               (millis() - kal_baslangic < KAL_TIMEOUT_MS)) {
             bno.getCalibration(&cal_sys, &cal_gyro, &cal_accel, &cal_mag);
             char buf[80];
             snprintf(buf, sizeof(buf), "Kal: Sys=%d/3 Gyro=%d/3 Accel=%d/3 Mag=%d/3",
@@ -740,8 +770,11 @@ void setup() {
             lora_log(buf);
             vTaskDelay(500 / portTICK_PERIOD_MS);
         }
+        if (cal_sys >= BNO055_MIN_KALIBRASYON)
+            lora_log("BNO055 kalibrasyonu tamamlandi!");
+        else
+            lora_log("UYARI: Kalibrasyon timeout - devam ediliyor (sys<1).");
     }
-    lora_log("BNO055 kalibrasyonu tamamlandi!");
 
     // BME280 genelde 0x76 veya 0x77 I2C adresi kullanır
     if (!bme.begin(BME280_ADDR_PRIMARY) && !bme.begin(BME280_ADDR_SECONDARY)) {
