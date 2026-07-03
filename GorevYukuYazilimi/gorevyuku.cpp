@@ -42,8 +42,8 @@
 
 // --- Pinler (main.cpp ile birebir) ---
 #define PIN_SPI_CS 5
-#define PIN_GPS_RX 16
-#define PIN_GPS_TX 17
+#define PIN_GPS_RX 17
+#define PIN_GPS_TX 16
 #define PIN_SPI_CLK 18
 #define PIN_SPI_MISO 19
 #define PIN_I2C_SDA 21
