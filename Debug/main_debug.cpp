@@ -44,7 +44,17 @@
 #define LORA_ADDL    0x01   // Adres dusuk byte
 #define LORA_CHAN    0x16   // Kanal (Gorev Yuku'nden FARKLI sec!) frekans=410+CHAN MHz
 #define LORA_SPED    0x1C   // UART 9600 8N1 + hava hizi (degistirmeyin)
-#define LORA_OPTION  0xC4   // TX gucu / opsiyon byte
+
+// --- OPTION byte bilesenleri (E32-433T30D datasheet §7.5) ---
+// OPTION = TX_MODE | IO_DRIVE | WOR_TIME | FEC | TX_POWER  (asagidan otomatik birlesir)
+#define LORA_TX_MODE   0x00   // bit7  0x00=SEFFAF (transparent) | 0x80=SABIT (fixed)
+#define LORA_IO_DRIVE  0x40   // bit6  0x40=push-pull/pull-up (varsayilan) | 0x00=open-collector
+#define LORA_WOR_TIME  0x00   // bit5-3 uyanma(WOR) suresi: 0x00=250 0x08=500 0x10=750 0x18=1000
+                              //                            0x20=1250 0x28=1500 0x30=1750 0x38=2000 ms
+#define LORA_FEC       0x04   // bit2  0x04=FEC ACIK (varsayilan) | 0x00=FEC kapali
+#define LORA_TX_POWER  0x00   // bit1-0 TX gucu: 0x00=30dBm(1W) 0x01=27 0x02=24 0x03=21 dBm
+
+#define LORA_OPTION  (LORA_TX_MODE | LORA_IO_DRIVE | LORA_WOR_TIME | LORA_FEC | LORA_TX_POWER)  // = 0x44 (seffaf, FEC acik, 250ms, 30dBm)
 
 // Uyarlanabilir Sabitler
 float referans_basinc = 1013.25;
@@ -249,6 +259,11 @@ struct DebugSnapshot {
     float gps_hdop;
     float gps_alt;
     uint32_t gps_age;
+    // GPS zaman/tarih (UTC — TinyGPS++ ham degerleri)
+    bool gps_time_valid;
+    uint8_t gps_saat, gps_dakika, gps_saniye;   // UTC saat
+    uint8_t gps_gun, gps_ay;
+    uint16_t gps_yil;
     // Apogee kosul bilesenleri
     bool apo_A, apo_B, apo_D;
     // Zamanlama
@@ -556,13 +571,27 @@ void Task1code(void *pvParameters) {
     dbg.gps_hdop  = gps.hdop.hdop();
     dbg.gps_alt   = gps.altitude.meters();
     dbg.gps_age   = gps.location.age();
+    // GPS saat/tarih (UTC)
+    dbg.gps_time_valid = gps.time.isValid();
+    dbg.gps_saat   = gps.time.hour();
+    dbg.gps_dakika = gps.time.minute();
+    dbg.gps_saniye = gps.time.second();
+    dbg.gps_gun    = gps.date.day();
+    dbg.gps_ay     = gps.date.month();
+    dbg.gps_yil    = gps.date.year();
 
 #if GPS_HAM_VERI
     // Okuma aninda parse edilmis GPS ozeti (throttle yok)
     if (gps.location.isUpdated()) {
-        Serial.printf("\n[GPS] lat:%.6f lng:%.6f uydu:%lu hdop:%.2f alt:%.1f valid:%s\n",
+        uint8_t saat_tr = (dbg.gps_saat + 3) % 24;   // UTC -> Turkiye (UTC+3)
+        Serial.printf("\n[GPS] lat:%.6f lng:%.6f uydu:%lu hdop:%.2f alt:%.1f valid:%s | "
+                      "saat(UTC):%02u:%02u:%02u  TR:%02u:%02u:%02u  tarih:%02u/%02u/%04u  saat_gecerli:%s\n",
                       gpsEnlem, gpsBoylam, dbg.gps_sat, dbg.gps_hdop, dbg.gps_alt,
-                      dbg.gps_valid ? "EVET" : "HAYIR");
+                      dbg.gps_valid ? "EVET" : "HAYIR",
+                      dbg.gps_saat, dbg.gps_dakika, dbg.gps_saniye,
+                      saat_tr, dbg.gps_dakika, dbg.gps_saniye,
+                      dbg.gps_gun, dbg.gps_ay, dbg.gps_yil,
+                      dbg.gps_time_valid ? "EVET" : "HAYIR");
     }
 #endif
 
@@ -709,6 +738,11 @@ void Task2code(void *pvParameters) {
             Serial.printf("  valid:%s  uydu:%lu  hdop:%.2f  lat:%.6f  lng:%.6f  alt:%.1f m  fix_yasi:%lu ms\n",
                           dbg.gps_valid ? "EVET" : "HAYIR", dbg.gps_sat, dbg.gps_hdop,
                           incomingPacket.gpsEnlem, incomingPacket.gpsBoylam, dbg.gps_alt, dbg.gps_age);
+            Serial.printf("  saat(UTC):%02u:%02u:%02u  TR:%02u:%02u:%02u  tarih:%02u/%02u/%04u  saat_gecerli:%s\n",
+                          dbg.gps_saat, dbg.gps_dakika, dbg.gps_saniye,
+                          (dbg.gps_saat + 3) % 24, dbg.gps_dakika, dbg.gps_saniye,
+                          dbg.gps_gun, dbg.gps_ay, dbg.gps_yil,
+                          dbg.gps_time_valid ? "EVET" : "HAYIR");
 
             // --- Durum makinesi ---
             Serial.println("-- DURUM MAKINESI --");
