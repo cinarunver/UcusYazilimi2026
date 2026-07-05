@@ -737,11 +737,17 @@ void Task2code(void *pvParameters) {
           // PAKET TİPİ: SUT VERİSİ (36 Byte)
           else if (beklenen_boyut == SITSUT_DATA_BOYUT) {
               if (ttl_buf[34] == SITSUT_FOOTER1 && ttl_buf[35] == SITSUT_FOOTER2) {
-                  // Checksum doğrula (8 float = 32 byte)
-                  uint8_t chk_hesap = 0;
-                  for (int i = 1; i <= 32; i++) chk_hesap += ttl_buf[i];
-                  
-                  if (chk_hesap == ttl_buf[33]) {
+                  // Checksum doğrula — TOLERANSLI:
+                  // Ek-7 Bölüm 3 checksum'ın hangi byte'ları kapsadığını netleştirmiyor.
+                  // Bu yüzden iki yaygın yorumu da kabul ediyoruz:
+                  //   (a) chk_payload  = yalnızca 32 byte payload toplamı (header hariç)
+                  //   (b) chk_header   = 0xAB header dahil toplam
+                  // Resmi test cihazı hangisini kullanırsa kullansın paket geçerli sayılır.
+                  uint8_t chk_payload = 0;
+                  for (int i = 1; i <= 32; i++) chk_payload += ttl_buf[i];
+                  uint8_t chk_header = chk_payload + ttl_buf[0]; // + 0xAB
+
+                  if (ttl_buf[33] == chk_payload || ttl_buf[33] == chk_header) {
                       // Verileri global değişkenlere dağıt
                       SitPaketi* sut_data = (SitPaketi*)ttl_buf;
                       irtifa = sut_data->irtifa;
