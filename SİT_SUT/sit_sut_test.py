@@ -6,9 +6,10 @@ import threading
 import sys
 
 # --- SABİT AYARLAR ---
-BAUD_RATE = 9600
-HEADER_CMD = 0xAA
-HEADER_DATA = 0xAB
+# Ek-7 Tablo 7: Baud 115200. (ESP32 firmware BAUD_TTL ile birebir aynı olmalı.)
+BAUD_RATE = 115200
+HEADER_CMD = 0xAA    # Komut (PC->UKB) ve Durum paketi (UKB->PC) header'ı
+HEADER_DATA = 0xAB   # SİT telemetri ve SUT veri header'ı
 FOOTER1 = 0x0D
 FOOTER2 = 0x0A
 CHK_OFFSET = 0x6C
@@ -16,6 +17,23 @@ CHK_OFFSET = 0x6C
 CMD_SIT_BASLAT = 0x20
 CMD_SUT_BASLAT = 0x22
 CMD_DURDUR = 0x24
+
+# SUT Durum Bilgilendirme bitleri (Tablo 5) — UKB'den gelen 2 byte'ın açılımı
+DURUM_BITLERI = [
+    "Kalkis algilandi",             # Bit 0
+    "Motor yanma suresi doldu",     # Bit 1
+    "Min irtifa esigi asildi",      # Bit 2
+    "Aci/ivme esigi asildi",        # Bit 3
+    "Alcalma basladi",              # Bit 4
+    "Suruklenme (drogue) emri",     # Bit 5
+    "Belirlenen irtifanin altinda", # Bit 6
+    "Ana parasut emri",             # Bit 7
+]
+
+def decode_durum(bits):
+    """16 bitlik durum degerini aktif asama isimlerine cevirir."""
+    aktif = [ad for i, ad in enumerate(DURUM_BITLERI) if bits & (1 << i)]
+    return f"0x{bits:04X} -> " + (", ".join(aktif) if aktif else "(hicbiri)")
 
 def select_serial_port():
     """Sistemdeki aktif seri portları listeler ve kullanıcıya seçtirir."""
@@ -68,21 +86,32 @@ class RocketTester:
         self.ser.write(packet)
 
     def receive_loop(self):
+        # Byte akışını header'a göre ayrıştırır:
+        #   0xAB + 35 byte -> SİT telemetri paketi (Tablo 3, 36 byte)
+        #   0xAA + 5  byte -> SUT durum bilgilendirme paketi (Tablo 6, 6 byte)
         while self.running:
             try:
-                if self.ser.in_waiting >= 36:
-                    header = self.ser.read(1)
-                    if header == b'\xab': 
-                        data = self.ser.read(35)
-                        if len(data) == 35 and data[-2:] == b'\r\n':
-                            vals = struct.unpack("<ffffffff", data[0:32])
-                            print(f"\r[SİT VERİSİ] Irtifa: {vals[0]:.1f}m | Basınç: {vals[1]:.1f}hPa | İvmeZ: {vals[4]:.2f}", end="")
-                    elif header == b'\xaa': 
-                        line = self.ser.readline().decode('ascii', errors='ignore').strip()
-                        print(f"\n[ROKET] {line}")
-            except:
+                b = self.ser.read(1)
+                if not b:
+                    continue
+
+                if b == b'\xab':
+                    data = self.ser.read(35)
+                    if len(data) == 35 and data[-2:] == b'\r\n':
+                        vals = struct.unpack("<ffffffff", data[0:32])
+                        print(f"\r[SİT] Irtifa:{vals[0]:.2f}m Basinc:{vals[1]:.2f}hPa "
+                              f"ivX:{vals[2]:.2f} ivY:{vals[3]:.2f} ivZ:{vals[4]:.2f} "
+                              f"aciX:{vals[5]:.2f} aciY:{vals[6]:.2f} aciZ:{vals[7]:.2f}      ", end="")
+
+                elif b == b'\xaa':
+                    rest = self.ser.read(5)  # Data1, Data2, CHK, 0x0D, 0x0A
+                    if len(rest) == 5 and rest[-2:] == b'\r\n':
+                        data1, data2 = rest[0], rest[1]
+                        bits = data1 | (data2 << 8)
+                        print(f"\n[DURUM] {decode_durum(bits)}")
+            except Exception:
                 break
-            time.sleep(0.01)
+            time.sleep(0.005)
 
 def main():
     print("================================================")
