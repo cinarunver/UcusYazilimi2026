@@ -30,6 +30,7 @@
 #include <FS.h>
 #include "driver/uart.h"      // DMA destekli UART sürücüsü
 #include "esp_heap_caps.h"    // DMA uyumlu bellek yönetimi
+#include <stdarg.h>           // dbg_append(...) icin va_list
 
 // ============================================================
 //  >>> DEBUG AYARLARI <<<
@@ -92,6 +93,19 @@ float referans_basinc = 1013.25;
 // --- ÇERÇEVE PROTOKOLü (Framed Binary) ---
 #define SYNC_BYTE_1          0xAA
 #define SYNC_BYTE_2          0x55
+
+// --- LORA GÖNDERİM MODU SEÇİMİ ---
+//   FRAMED : AA 55 LEN <payload> CRC16  -> ham binary, kompakt, CRC korumali
+//   STRING : "$TELE,...*\r\n" CSV metin -> insan-okunur, basit alici (parse kolay)
+// Alici tarafin AYNI modu beklemesi sart. Sadece bu satiri degistir:
+#define LORA_MODE_FRAMED     0
+#define LORA_MODE_STRING     1
+#define LORA_GONDERIM_MODU   LORA_MODE_STRING
+
+// STRING modunda LoRa'ya, serial monitordeki TAM debug dokumunun AYNISI basilir.
+// Ama 9600 baud havada ~960 B/sn tasir; tam dokum ~1.5 KB oldugundan 10 Hz SIGMAZ.
+// Bu yuzden LoRa'ya dokum su araligla (ms) gonderilir (serial yine tam hizda):
+#define LORA_DUMP_MS         2000
 
 // --- LORA GÖNDERİM HIZI ---
 #define LORA_GONDERIM_ORANI    10
@@ -275,9 +289,28 @@ struct DebugSnapshot {
 volatile DebugSnapshot dbg = {};
 
 // LoRa cercevesinin son hex dokumu (Task2'de doldurulur, ayni yerde basilir)
-static uint8_t son_frame[80];
+// Not: STRING modda CSV metni framed binary'den uzun olabilir, bol tut.
+static uint8_t son_frame[200];
 static size_t  son_frame_len = 0;
 static uint16_t son_crc = 0;
+
+// --- DEBUG DOKUM BUFFER'I ---
+// Serial monitore basilan tam durum dokumu once buraya kurulur; ayni buffer
+// hem Serial'e hem (STRING modunda) LoRa'ya basilir -> ikisi BIREBIR ayni olur.
+static char dbg_buf[2048];
+static int  dbg_off = 0;
+
+// printf gibi calisir ama dbg_buf'a ekler (tasma korumali).
+static void dbg_append(const char* fmt, ...) {
+    if (dbg_off >= (int)sizeof(dbg_buf) - 1) return;
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vsnprintf(dbg_buf + dbg_off, sizeof(dbg_buf) - dbg_off, fmt, ap);
+    va_end(ap);
+    if (n < 0) return;
+    dbg_off += n;
+    if (dbg_off > (int)sizeof(dbg_buf) - 1) dbg_off = sizeof(dbg_buf) - 1;  // kirpildi
+}
 
 // ============================================================
 //  Hazır Kullanılacak Metodlar/Fonksiyonlar
@@ -418,6 +451,45 @@ void gonder_paket_framed_dma(uart_port_t uart_num, const TelemetryPacket& pkt) {
     memcpy(son_frame, frame_buf, idx);
     son_frame_len = idx;
     son_crc = crc;
+}
+
+// --- CSV METIN PAKET GÖNDERME (STRING modu) ---
+// Format: $TELE,ivmeX,ivmeY,ivmeZ,gyroX,gyroY,gyroZ,roll,pitch,yaw,
+//         irtifa,dikeyHiz,eglimAcisi,gpsEnlem,gpsBoylam,ayr1,ayr2,durum*\r\n
+// DEBUG: gonderilen metin son_frame'e de yazilir ki Task2 hex/metin dokebilsin.
+void gonder_paket_string_dma(uart_port_t uart_num, const TelemetryPacket& pkt) {
+    static char str_buf[200];
+
+    int n = snprintf(str_buf, sizeof(str_buf),
+        "$TELE,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.6f,%.6f,%d,%d,%u*\r\n",
+        pkt.ivmeX, pkt.ivmeY, pkt.ivmeZ,
+        pkt.gyroX, pkt.gyroY, pkt.gyroZ,
+        pkt.roll,  pkt.pitch, pkt.yaw,
+        pkt.irtifa, pkt.dikeyHiz, pkt.eglimAcisi,
+        pkt.gpsEnlem, pkt.gpsBoylam,
+        (int)pkt.ayrilma1_durum, (int)pkt.ayrilma2_durum,
+        (unsigned)pkt.ucus_durumu);
+
+    if (n < 0) return;                              // snprintf hatasi
+    if (n >= (int)sizeof(str_buf)) n = sizeof(str_buf) - 1;  // taskin -> kirp
+
+    uart_write_bytes(uart_num, str_buf, n);
+
+    // DEBUG: son gonderileni sakla (hex/metin dokumu icin)
+    size_t cpy = ((size_t)n < sizeof(son_frame)) ? (size_t)n : sizeof(son_frame);
+    memcpy(son_frame, str_buf, cpy);
+    son_frame_len = cpy;
+    son_crc = 0;   // string modda CRC yok
+}
+
+// --- MOD SECIMLI LORA GONDERIM (dispatcher) ---
+// LORA_GONDERIM_MODU makrosuna gore framed binary veya CSV metin basar.
+void gonder_paket_lora(uart_port_t uart_num, const TelemetryPacket& pkt) {
+#if LORA_GONDERIM_MODU == LORA_MODE_STRING
+    gonder_paket_string_dma(uart_num, pkt);
+#else
+    gonder_paket_framed_dma(uart_num, pkt);
+#endif
 }
 
 // --- E32-433T30D LORA MODUL KONFIGURASYONU ---
@@ -690,99 +762,128 @@ void Task2code(void *pvParameters) {
             }
         }
 
-        // 2. LoRa (E32-433T30D) — Asenkron DMA Gönderimi (~10 Hz)
+        // 2. LoRa (E32-433T30D) — Asenkron DMA Gönderimi
+        // FRAMED modunda: her LORA_GONDERIM_ORANI pakette bir binary cerceve (~10 Hz).
+        // STRING modunda: burada gonderilmez; asagida TAM debug dokumu LoRa'ya basilir.
         lora_sayac++;
         bool tx_bu_dongu = false;
+#if LORA_GONDERIM_MODU == LORA_MODE_FRAMED
         if (lora_sayac >= LORA_GONDERIM_ORANI) {
-            gonder_paket_framed_dma(UART_NUM_1, incomingPacket);
+            gonder_paket_lora(UART_NUM_1, incomingPacket);
             lora_sayac = 0;
             tx_bu_dongu = true;
         }
+#endif
 
         // 3. DEBUG: periyodik tam durum dokumu (~10 Hz)
+        // Dokum once dbg_buf'a kurulur; AYNI buffer hem Serial'e (her zaman) hem
+        // STRING modunda LoRa'ya (LORA_DUMP_MS'de bir) basilir -> ikisi BIREBIR ayni.
+        static unsigned long son_lora_dump = 0;
         if (millis() - son_basim >= DBG_PRINT_MS) {
             son_basim = millis();
+            dbg_off = 0;   // dokum buffer'ini sifirla
 
-            Serial.println("\n============================================================");
-            Serial.printf("[t=%lu ms] dongu#%lu  ~%.1f Hz  |  DURUM: %s  max_irtifa=%.1f m\n",
+            // Bu dongu LoRa'ya tam dokum gonderilecek mi? (bandwidth throttle)
+            bool lora_dump_bu_dongu = false;
+#if LORA_GONDERIM_MODU == LORA_MODE_STRING
+            if (millis() - son_lora_dump >= LORA_DUMP_MS) lora_dump_bu_dongu = true;
+#endif
+
+            dbg_append("\n============================================================\n");
+            dbg_append("[t=%lu ms] dongu#%lu  ~%.1f Hz  |  DURUM: %s  max_irtifa=%.1f m\n",
                           millis(), dbg.dongu_sayaci, dbg.dongu_hz,
                           durum_adi(incomingPacket.ucus_durumu), max_irtifa_degeri);
 
             // --- BNO055: ham vs Kalman ---
-            Serial.println("-- BNO055 (ham -> Kalman) --");
-            Serial.printf("  ivme  X:%7.2f->%7.2f  Y:%7.2f->%7.2f  Z:%7.2f->%7.2f  m/s^2\n",
+            dbg_append("-- BNO055 (ham -> Kalman) --\n");
+            dbg_append("  ivme  X:%7.2f->%7.2f  Y:%7.2f->%7.2f  Z:%7.2f->%7.2f  m/s^2\n",
                           dbg.ham_ivmeX, incomingPacket.ivmeX, dbg.ham_ivmeY, incomingPacket.ivmeY,
                           dbg.ham_ivmeZ, incomingPacket.ivmeZ);
-            Serial.printf("  gyro  X:%7.2f->%7.2f  Y:%7.2f->%7.2f  Z:%7.2f->%7.2f  rad/s\n",
+            dbg_append("  gyro  X:%7.2f->%7.2f  Y:%7.2f->%7.2f  Z:%7.2f->%7.2f  rad/s\n",
                           dbg.ham_gyroX, incomingPacket.gyroX, dbg.ham_gyroY, incomingPacket.gyroY,
                           dbg.ham_gyroZ, incomingPacket.gyroZ);
-            Serial.printf("  euler roll:%7.2f->%7.2f pitch:%7.2f->%7.2f yaw:%7.2f->%7.2f deg\n",
+            dbg_append("  euler roll:%7.2f->%7.2f pitch:%7.2f->%7.2f yaw:%7.2f->%7.2f deg\n",
                           dbg.ham_roll, incomingPacket.roll, dbg.ham_pitch, incomingPacket.pitch,
                           dbg.ham_yaw, incomingPacket.yaw);
-            Serial.printf("  kalibrasyon: Sys=%d/3 Gyro=%d/3 Accel=%d/3 Mag=%d/3\n",
+            dbg_append("  kalibrasyon: Sys=%d/3 Gyro=%d/3 Accel=%d/3 Mag=%d/3\n",
                           dbg.cal_sys, dbg.cal_gyro, dbg.cal_accel, dbg.cal_mag);
 
             // --- BME280 ---
-            Serial.println("-- BME280 --");
-            Serial.printf("  irtifa ham:%8.2f -> Kalman:%8.2f m   (ref_basinc=%.2f hPa)\n",
+            dbg_append("-- BME280 --\n");
+            dbg_append("  irtifa ham:%8.2f -> Kalman:%8.2f m   (ref_basinc=%.2f hPa)\n",
                           dbg.ham_irtifa, incomingPacket.irtifa, referans_basinc);
-            Serial.printf("  basinc:%8.2f hPa  sicaklik:%6.2f C  nem:%5.1f %%\n",
+            dbg_append("  basinc:%8.2f hPa  sicaklik:%6.2f C  nem:%5.1f %%\n",
                           dbg.bme_basinc_hpa, dbg.bme_sicaklik, dbg.bme_nem);
 
             // --- Turetilmis ---
-            Serial.printf("-- Turetilmis --  dikeyHiz:%7.2f m/s   eglim_acisi:%6.2f deg\n",
+            dbg_append("-- Turetilmis --  dikeyHiz:%7.2f m/s   eglim_acisi:%6.2f deg\n",
                           incomingPacket.dikeyHiz, incomingPacket.eglimAcisi);
 
             // --- GPS ---
-            Serial.println("-- GPS (GY-NEO-7M) --");
-            Serial.printf("  valid:%s  uydu:%lu  hdop:%.2f  lat:%.6f  lng:%.6f  alt:%.1f m  fix_yasi:%lu ms\n",
+            dbg_append("-- GPS (GY-NEO-7M) --\n");
+            dbg_append("  valid:%s  uydu:%lu  hdop:%.2f  lat:%.6f  lng:%.6f  alt:%.1f m  fix_yasi:%lu ms\n",
                           dbg.gps_valid ? "EVET" : "HAYIR", dbg.gps_sat, dbg.gps_hdop,
                           incomingPacket.gpsEnlem, incomingPacket.gpsBoylam, dbg.gps_alt, dbg.gps_age);
-            Serial.printf("  saat(UTC):%02u:%02u:%02u  TR:%02u:%02u:%02u  tarih:%02u/%02u/%04u  saat_gecerli:%s\n",
+            dbg_append("  saat(UTC):%02u:%02u:%02u  TR:%02u:%02u:%02u  tarih:%02u/%02u/%04u  saat_gecerli:%s\n",
                           dbg.gps_saat, dbg.gps_dakika, dbg.gps_saniye,
                           (dbg.gps_saat + 3) % 24, dbg.gps_dakika, dbg.gps_saniye,
                           dbg.gps_gun, dbg.gps_ay, dbg.gps_yil,
                           dbg.gps_time_valid ? "EVET" : "HAYIR");
 
             // --- Durum makinesi ---
-            Serial.println("-- DURUM MAKINESI --");
-            Serial.printf("  durum:%s  apogee kosullari: A(dusus>15m)=%d B(hiz<0)=%d D(eglim<10)=%d\n",
+            dbg_append("-- DURUM MAKINESI --\n");
+            dbg_append("  durum:%s  apogee kosullari: A(dusus>15m)=%d B(hiz<0)=%d D(eglim<10)=%d\n",
                           durum_adi(incomingPacket.ucus_durumu), dbg.apo_A, dbg.apo_B, dbg.apo_D);
-            Serial.printf("  ayrilma1:%d ayrilma2:%d | funye1_aktif:%d(kalan %ld ms) funye2_aktif:%d(kalan %ld ms)\n",
+            dbg_append("  ayrilma1:%d ayrilma2:%d | funye1_aktif:%d(kalan %ld ms) funye2_aktif:%d(kalan %ld ms)\n",
                           incomingPacket.ayrilma1_durum, incomingPacket.ayrilma2_durum,
                           funye1_aktif, funye1_aktif ? (long)(FUNYE_SURE_MS - (millis()-funye1_baslangic)) : 0,
                           funye2_aktif, funye2_aktif ? (long)(FUNYE_SURE_MS - (millis()-funye2_baslangic)) : 0);
 
             // --- TelemetryPacket ozeti ---
-            Serial.printf("-- PAKET --  sizeof(TelemetryPacket)=%u B  ucus_durumu=%d\n",
+            dbg_append("-- PAKET --  sizeof(TelemetryPacket)=%u B  ucus_durumu=%d\n",
                           (unsigned)sizeof(TelemetryPacket), incomingPacket.ucus_durumu);
 
-            // --- LoRa cercevesi (son gonderilen) ---
-            Serial.print("-- LoRa CERCEVE --  ");
-            if (tx_bu_dongu) Serial.print("[BU DONGU TX EDILDI] ");
-            else Serial.printf("[bu dongu TX yok, sayac %lu/%d] ", lora_sayac, LORA_GONDERIM_ORANI);
+            // --- LoRa TX durumu ---
+#if LORA_GONDERIM_MODU == LORA_MODE_STRING
+            dbg_append("-- LoRa TX (STRING/DOKUM) --  ");
+            if (lora_dump_bu_dongu) dbg_append("[BU DONGU TAM DOKUM TX] (~her %d ms)\n", LORA_DUMP_MS);
+            else dbg_append("[bekliyor %lu/%d ms]\n", millis() - son_lora_dump, LORA_DUMP_MS);
+#else
+            dbg_append("-- LoRa CERCEVE (FRAMED) --  ");
+            if (tx_bu_dongu) dbg_append("[BU DONGU TX EDILDI] ");
+            else dbg_append("[bu dongu TX yok, sayac %lu/%d] ", lora_sayac, LORA_GONDERIM_ORANI);
             if (son_frame_len > 0) {
-                Serial.printf("(%u B, CRC16=0x%04X)\n  ", (unsigned)son_frame_len, son_crc);
+                dbg_append("(%u B, CRC16=0x%04X)\n  ", (unsigned)son_frame_len, son_crc);
                 for (size_t i = 0; i < son_frame_len; i++) {
-                    Serial.printf("%02X ", son_frame[i]);
-                    if ((i & 0x0F) == 0x0F) Serial.print("\n  ");
+                    dbg_append("%02X ", son_frame[i]);
+                    if ((i & 0x0F) == 0x0F) dbg_append("\n  ");
                 }
-                Serial.println();
+                dbg_append("\n");
             } else {
-                Serial.println("(henuz cerceve gonderilmedi)");
+                dbg_append("(henuz cerceve gonderilmedi)\n");
             }
+#endif
 
             // --- Kuyruk durumu ---
-            Serial.printf("-- KUYRUK --  bekleyen:%u/%d  bos_yer:%u\n",
+            dbg_append("-- KUYRUK --  bekleyen:%u/%d  bos_yer:%u\n",
                           (unsigned)uxQueueMessagesWaiting(telemetryQueue), TELEMETRY_QUEUE_LEN,
                           (unsigned)uxQueueSpacesAvailable(telemetryQueue));
 
             // --- SD durumu ---
-            Serial.printf("-- SD --  sdOk:%d  aktif_buffer:%c  buf_idx:%d/%d\n",
+            dbg_append("-- SD --  sdOk:%d  aktif_buffer:%c  buf_idx:%d/%d\n",
                           sdOk, (active_sd_buf == 0) ? 'A' : 'B', sd_buf_idx, SD_DMA_BUF_SIZE);
 
             // --- Sistem ---
-            Serial.printf("-- SISTEM --  free_heap:%u B\n", (unsigned)ESP.getFreeHeap());
+            dbg_append("-- SISTEM --  free_heap:%u B\n", (unsigned)ESP.getFreeHeap());
+
+            // === TEK SEFERDE BAS ===
+            Serial.print(dbg_buf);                        // Serial monitor: her zaman, tam hizda
+#if LORA_GONDERIM_MODU == LORA_MODE_STRING
+            if (lora_dump_bu_dongu) {                     // LoRa: ayni dokum, throttle'li
+                uart_write_bytes(UART_NUM_1, dbg_buf, dbg_off);
+                son_lora_dump = millis();
+            }
+#endif
         }
     }
   }

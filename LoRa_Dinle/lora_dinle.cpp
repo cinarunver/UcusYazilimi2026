@@ -8,8 +8,9 @@
  *   LoRa  : UART1  RX=32, TX=33 @ 9600 baud (main.cpp ile ayni)
  *   Cikti : USB Serial @ 115200  ->  pio device monitor -e loradinle
  *
- * Gelen veri binary cerceve oldugu icin HEX olarak basilir.
- * Cerceve baslangici (0xAA) gorulunce alt satira gecilir -> her satir 1 paket.
+ * Gonderici STRING modunda TAM debug dokumunu (cok satirli, serial monitorun
+ * AYNISI) ~LORA_DUMP_MS'de bir gonderir. Gelen ASCII'yi oldugu gibi basiyoruz
+ * -> terminalde okunur cok satirli blok cikar.
  *
  * DERLEME/YUKLEME:
  *   pio run -e loradinle --target upload
@@ -39,13 +40,14 @@ void setup() {
     Serial1.begin(BAUD_LORA, SERIAL_8N1, PIN_LORA_RX, PIN_LORA_TX);
 
     delay(300);
-    Serial.println("\n### LORA DINLEYICI - gelen veri (HEX) ###");
+    Serial.println("\n### LORA DINLEYICI - gelen veri (STRING / TAM DOKUM) ###");
 }
 
 void loop() {
+    // STRING modu: gonderici ASCII CSV + \r\n gonderiyor.
+    // Gelen byte'lari oldugu gibi USB monitore yaz -> satirlar okunabilir cikar.
     while (Serial1.available() > 0) {
-        uint8_t b = Serial1.read();
-        if (b == 0xAA) Serial.println();   // yeni cerceve -> alt satir
-        Serial.printf("%02X ", b);
+        char c = (char)Serial1.read();
+        Serial.write(c);
     }
 }

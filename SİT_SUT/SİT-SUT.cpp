@@ -67,9 +67,9 @@ float referans_basinc = 1013.25;
 #define PIN_SDKART_DET 35
 
 // Haberleşme Sabitleri
-#define BAUD_GPS               9600  // UART2  — GY-NEO-7M GPS modülü
-#define BAUD_LORA              9600  // UART1  — E32-433T30D LoRa modülü (SX1278 tabanlı)
-#define BAUD_TTL               9600  // UART0  — SİT/SUT komut alma (TTL)
+#define BAUD_GPS               9600   // UART2  — GY-NEO-7M GPS modülü
+#define BAUD_LORA              9600   // UART1  — E32-433T30D LoRa modülü (SX1278 tabanlı)
+#define BAUD_TTL             115200   // UART0  — SİT/SUT komut alma (TTL) — Ek-7 Tablo 7 zorunlu deger
 #define UART_BUFFER_SIZE       1024  // TX buffer (Non-Blocking gönderim için)
 
 // --- ÇERÇEVE PROTOKOLü (Framed Binary) ---
@@ -100,6 +100,30 @@ float referans_basinc = 1013.25;
 #define CMD_SIT_BASLAT       0x20  // Sensör İzleme Testi Başlat
 #define CMD_SUT_BASLAT       0x22  // Sentetik Uçuş Testi Başlat
 #define CMD_DURDUR           0x24  // Testi Durdur
+
+// --- ORTAK ZAMANLAMA (Ek-7) ---
+#define TEST_AKTIVASYON_GECIKME_MS  1000  // Komut onaylandiktan sonra modun aktif olma gecikmesi (Uygulama Plani c)
+#define SITSUT_GONDERIM_PERIYOT_MS   100  // SİT telemetri + SUT durum paketi periyodu = 10 Hz (s.7)
+#define SITSUT_FRAME_TIMEOUT_MS      100  // Yarim kalan cerceve icin parser sifirlama suresi (Tablo 7)
+
+// --- SUT DURUM BİLGİLENDİRME PAKETİ (Tablo 5 & 6) ---
+// Format: [HEADER=0xAA][Data1][Data2][Checksum][0x0D][0x0A] = 6 byte
+// Data1 = bit 0-7, Data2 = bit 8-15. Checksum = (Data1 + Data2) & 0xFF
+// Bit=1 ilgili asamanin aktif oldugunu gosterir (Tablo 5).
+#define SITSUT_DURUM_BOYUT   6
+#define ST_BIT_KALKIS        (1u << 0)  // Bit 0: Roket kalkisi algilandi
+#define ST_BIT_MOTOR_YANMA   (1u << 1)  // Bit 1: Motor yanma onlem suresi doldu
+#define ST_BIT_MIN_IRTIFA    (1u << 2)  // Bit 2: Minimum irtifa esigi asildi
+#define ST_BIT_ACI_ESIK      (1u << 3)  // Bit 3: Govde acisi / yatay ivme esigi asildi
+#define ST_BIT_ALCALMA       (1u << 4)  // Bit 4: Roket irtifasi alcalmaya basladi
+#define ST_BIT_DROGUE_EMIR   (1u << 5)  // Bit 5: Suruklenme parasutu acma emri olusturuldu
+#define ST_BIT_ANA_IRTIFA    (1u << 6)  // Bit 6: Roket belirlenen irtifanin altina indi
+#define ST_BIT_ANA_EMIR      (1u << 7)  // Bit 7: Ana parasut acma emri olusturuldu
+
+// Durum bitleri esik degerleri
+#define DURUM_MIN_IRTIFA_ESIGI  100.0  // m       - Bit 2 esigi
+#define DURUM_ACI_ESIGI          45.0  // derece  - Bit 3 esigi (govde egim acisi)
+#define MOTOR_YANMA_SURE_MS      3000  // ms       - Bit 1: kalkistan sonra motor yanma onlem suresi
 
 // Sensör Sabitleri
 #define BNO055_DEF 55
@@ -149,6 +173,10 @@ volatile SitSutModu sitSutMod = MOD_BEKLEME;
 bool ayrilma1 = false;
 bool ayrilma2 = false;
 float max_irtifa_degeri = 0.0;
+unsigned long kalkis_zaman = 0;          // Kalkis aninin millis() degeri (durum biti 1 icin)
+
+// SUT durum bilgilendirme bitleri (Tablo 5) — Core 0'da guncellenir, latch mantigi
+volatile uint16_t durum_bitleri = 0;
 
 // --- FÜNYE ZAMANLAMA (Non-Blocking) ---
 #define FUNYE_SURE_MS 400  // Fünyeye enerji verilecek süre (ms)
@@ -387,20 +415,26 @@ void gonder_paket_framed(HardwareSerial& port, const TelemetryPacket& pkt) {
     // Toplam: 76 byte/çerçeve
 }
 
+// FLOAT değerini virgülden sonra 2 basamağa yuvarlar (Ek-7 s.7:
+// "Test cihazı yalnızca virgülden sonra 2 basamağa kadar olan veriyi kabul edecektir")
+static inline float yuvarla2(float v) {
+    return roundf(v * 100.0f) / 100.0f;
+}
+
 // --- SİT PAKETİ GÖNDERME (TTL / UART0 / Serial) ---
 // Tablo 3'e göre 36 byte binary paket — Core 0'dan çağrılır
 // Checksum: Payload byte'larının toplamı (header ve footer hariç), low byte
 void gonder_sit_paketi() {
     SitPaketi pkt;
     pkt.header  = 0xAB;
-    pkt.irtifa  = irtifa;
-    pkt.basinc  = basinc;
-    pkt.ivmeX   = ivmeX;
-    pkt.ivmeY   = ivmeY;
-    pkt.ivmeZ   = ivmeZ;
-    pkt.aciX    = roll;   // AÇI X = Roll
-    pkt.aciY    = pitch;  // AÇI Y = Pitch
-    pkt.aciZ    = yaw;    // AÇI Z = Yaw
+    pkt.irtifa  = yuvarla2(irtifa);
+    pkt.basinc  = yuvarla2(basinc);
+    pkt.ivmeX   = yuvarla2(ivmeX);
+    pkt.ivmeY   = yuvarla2(ivmeY);
+    pkt.ivmeZ   = yuvarla2(ivmeZ);
+    pkt.aciX    = yuvarla2(roll);   // AÇI X = Roll
+    pkt.aciY    = yuvarla2(pitch);  // AÇI Y = Pitch
+    pkt.aciZ    = yuvarla2(yaw);    // AÇI Z = Yaw
 
     // Checksum hesapla: 8 float (32 byte) payload toplamı
     uint8_t chk = 0;
@@ -415,14 +449,47 @@ void gonder_sit_paketi() {
     Serial.write((const uint8_t*)&pkt, sizeof(SitPaketi));
 }
 
+// --- SUT DURUM BİLGİLENDİRME PAKETİ GÖNDERME (TTL / UART0 / Serial) ---
+// Tablo 6'ya göre 6 byte: [0xAA][Data1][Data2][CHK][0x0D][0x0A]
+// Data1 = durum_bitleri bit 0-7, Data2 = bit 8-15. CHK = (Data1+Data2)&0xFF.
+// Yalnızca SUT modunda 10 Hz gönderilir (Core 0'dan çağrılır).
+void gonder_durum_paketi() {
+    uint8_t data1 = (uint8_t)(durum_bitleri & 0xFF);
+    uint8_t data2 = (uint8_t)((durum_bitleri >> 8) & 0xFF);
+    uint8_t chk   = (uint8_t)(data1 + data2);
+    uint8_t paket[SITSUT_DURUM_BOYUT] = {
+        SITSUT_HEADER, data1, data2, chk, SITSUT_FOOTER1, SITSUT_FOOTER2
+    };
+    Serial.write(paket, SITSUT_DURUM_BOYUT);
+}
+
 // Core 0'da çalışacak olan görevin fonsiyonu
 void Task1code(void *pvParameters) {
  
+
+  static SitSutModu onceki_mod = MOD_BEKLEME;
 
   for (;;) {
     // ----------------------------------------------------
     // KENDI KODUNUZU BURAYA YAZIN (CORE 0 - SÜREKLİ DÖNGÜ)
     // ----------------------------------------------------
+
+    // 0. MOD GEÇİŞ KONTROLÜ — Yeni bir SUT başladığında uçuş algoritmasını
+    //    temiz bir başlangıç için sıfırla (Uygulama Planı: yeni test için hazır olmalı)
+    SitSutModu simdiki_mod = sitSutMod;
+    if (simdiki_mod != onceki_mod) {
+        if (simdiki_mod == MOD_SUT) {
+            durum             = HAZIR;
+            ayrilma1          = false;
+            ayrilma2          = false;
+            max_irtifa_degeri = 0.0;
+            durum_bitleri     = 0;
+            kalkis_zaman      = 0;
+            onceki_zaman      = 0;      // dikey hız hesaplayıcı yeniden başlasın
+            anlik_dikey_hiz   = 0.0;
+        }
+        onceki_mod = simdiki_mod;
+    }
 
     // 1. Sensör Verilerini Okuma (SUT modunda değilsek donanımdan oku)
     if (sitSutMod != MOD_SUT) {
@@ -485,6 +552,7 @@ void Task1code(void *pvParameters) {
             // [ TODO ] BNO055 Z-ekseni yönü doğrulanmalı!
             if (ivmeZ > KALKIS_IVME_ESIGI) {
                 durum = YUKSELIYOR;
+                kalkis_zaman = millis(); // Motor yanma önlem süresi (durum biti 1) için referans
             }
             break;
 
@@ -542,9 +610,29 @@ void Task1code(void *pvParameters) {
             break;
     }
 
-    // --- SİT MODU: Sensör verisini TTL üzerinden binary olarak gönder ---
-    if (sitSutMod == MOD_SIT) {
-        gonder_sit_paketi(); // Tablo 3 formatında 36 byte paket → Serial (UART0)
+    // --- SUT DURUM BİTLERİNİ GÜNCELLE (Tablo 5, latch mantığı) ---
+    // Uçuş algoritması hangi aşamada ise ilgili bit '1' yapılır (bir kez set edilince kalır).
+    if (durum >= YUKSELIYOR)                            durum_bitleri |= ST_BIT_KALKIS;
+    if ((durum_bitleri & ST_BIT_KALKIS) &&
+        (millis() - kalkis_zaman >= MOTOR_YANMA_SURE_MS)) durum_bitleri |= ST_BIT_MOTOR_YANMA;
+    if (irtifa > DURUM_MIN_IRTIFA_ESIGI)               durum_bitleri |= ST_BIT_MIN_IRTIFA;
+    if (eglim_acisi > DURUM_ACI_ESIGI)                 durum_bitleri |= ST_BIT_ACI_ESIK;
+    if (durum >= INIS_1)                               durum_bitleri |= ST_BIT_ALCALMA;
+    if (ayrilma1)                                      durum_bitleri |= ST_BIT_DROGUE_EMIR;
+    if ((durum >= INIS_1) && (irtifa < AYRILMA2_MESAFE)) durum_bitleri |= ST_BIT_ANA_IRTIFA;
+    if (ayrilma2)                                      durum_bitleri |= ST_BIT_ANA_EMIR;
+
+    // --- 10 Hz TTL GÖNDERİM (Ek-7 s.7) ---
+    //   MOD_SIT → Tablo 3 telemetri paketi (36 byte)
+    //   MOD_SUT → Tablo 6 durum bilgilendirme paketi (6 byte)
+    static unsigned long son_ttl_gonderim = 0;
+    if (millis() - son_ttl_gonderim >= SITSUT_GONDERIM_PERIYOT_MS) {
+        son_ttl_gonderim = millis();
+        if (sitSutMod == MOD_SIT) {
+            gonder_sit_paketi();     // 36 byte, Serial (UART0)
+        } else if (sitSutMod == MOD_SUT) {
+            gonder_durum_paketi();   // 6 byte durum paketi, Serial (UART0)
+        }
     }
 
     // --- STRUCT DOLDURMA VE CORE 1'E GÖNDERME ---
@@ -576,7 +664,7 @@ void Task1code(void *pvParameters) {
 //   2. Komuta göre mod durum makinesini günceller (MOD_BEKLEME / MOD_SIT / MOD_SUT)
 //   3. Core 0'dan gelen TelemetryPacket'i çerçeveleyip LoRa ve SD'ye gönderir
 //
-// TTL (UART0 / Serial)  → SİT/SUT komut alımı      @  9600 baud
+// TTL (UART0 / Serial)  → SİT/SUT komut+veri (RX) / SİT+durum paketi (TX)  @ 115200 baud (Ek-7 Tablo 7)
 // LoRa (UART1 / Serial1) → E32-433T30D modülü      @  9600 baud  → Her 10. paket (~10 Hz)
 // SD Kart                 → Kara kutu loglama       @ CSV format  → HER paket (~100 Hz)
 //
@@ -592,12 +680,19 @@ void Task2code(void *pvParameters) {
   uint8_t ttl_buf[SITSUT_DATA_BOYUT]; // Max 36 byte
   uint8_t ttl_idx = 0;
   uint8_t beklenen_boyut = SITSUT_PAKET_BOYUT;
+  unsigned long son_ttl_byte_zamani = 0;   // Frame timeout için son alınan byte zamanı
+
+  // 1 saniye gecikmeli aktivasyon (Uygulama Planı c) — komut onaylanır, mod 1 sn sonra aktif olur
+  SitSutModu bekleyen_mod        = MOD_BEKLEME;
+  bool          aktivasyon_bekliyor = false;
+  unsigned long aktivasyon_zamani    = 0;
 
   for (;;) {
 
     // ─── 1. TTL OKUMA (Komutlar ve SUT Verisi) ────────────────────────
     while (Serial.available() > 0) {
       uint8_t b = Serial.read();
+      son_ttl_byte_zamani = millis();
 
       if (ttl_idx == 0) {
         if (b == SITSUT_HEADER) {
@@ -617,9 +712,25 @@ void Task2code(void *pvParameters) {
               uint8_t chk = ttl_buf[2];
               if (ttl_buf[3] == SITSUT_FOOTER1 && ttl_buf[4] == SITSUT_FOOTER2 && chk == (uint8_t)(cmd + SITSUT_CHK_OFFSET)) {
                   switch (cmd) {
-                      case CMD_SIT_BASLAT: sitSutMod = MOD_SIT; Serial1.println("[SIT] BASLADI"); break;
-                      case CMD_SUT_BASLAT: sitSutMod = MOD_SUT; Serial1.println("[SUT] BASLADI"); break;
-                      case CMD_DURDUR:     sitSutMod = MOD_BEKLEME; Serial1.println("[STOP] DURDURULDU"); break;
+                      // Başlat komutları: 1 sn sonra aktif ol (Uygulama Planı c)
+                      case CMD_SIT_BASLAT:
+                          bekleyen_mod        = MOD_SIT;
+                          aktivasyon_bekliyor = true;
+                          aktivasyon_zamani   = millis() + TEST_AKTIVASYON_GECIKME_MS;
+                          Serial1.println("[SIT] onaylandi, 1sn sonra aktif");
+                          break;
+                      case CMD_SUT_BASLAT:
+                          bekleyen_mod        = MOD_SUT;
+                          aktivasyon_bekliyor = true;
+                          aktivasyon_zamani   = millis() + TEST_AKTIVASYON_GECIKME_MS;
+                          Serial1.println("[SUT] onaylandi, 1sn sonra aktif");
+                          break;
+                      // Durdur komutu: anında etkili, bekleyen aktivasyonu da iptal et
+                      case CMD_DURDUR:
+                          aktivasyon_bekliyor = false;
+                          sitSutMod           = MOD_BEKLEME;
+                          Serial1.println("[STOP] DURDURULDU");
+                          break;
                   }
               }
           } 
@@ -647,6 +758,17 @@ void Task2code(void *pvParameters) {
           ttl_idx = 0;
         }
       }
+    }
+
+    // ─── 1b. FRAME TIMEOUT (100 ms) — yarım kalan çerçeveyi sıfırla (Tablo 7) ──
+    if (ttl_idx > 0 && (millis() - son_ttl_byte_zamani) > SITSUT_FRAME_TIMEOUT_MS) {
+        ttl_idx = 0;
+    }
+
+    // ─── 1c. GECİKMELİ AKTİVASYON — komut onayından 1 sn sonra modu etkinleştir ──
+    if (aktivasyon_bekliyor && (long)(millis() - aktivasyon_zamani) >= 0) {
+        sitSutMod           = bekleyen_mod;
+        aktivasyon_bekliyor = false;
     }
 
     // ─── 2. MOD İŞLEMLERİ ─────────────────────────────────────────────
