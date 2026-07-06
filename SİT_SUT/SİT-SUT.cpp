@@ -88,14 +88,16 @@ float referans_basinc = 1013.25;
 
 // --- SİT/SUT KOMUT PROTOKOLÜ ---
 // Format: [HEADER:0xAA][COMMAND:1B][CHECKSUM:1B][FOOTER1:0x0D][FOOTER2:0x0A]
-// Checksum = Command + 0x6C (tabloya göre doğrulanmış)
+// Checksum = checksum'dan ONCEKI tum byte'larin toplami (mod 256) — EK-7 Bolum 3.
+//   Komut icin: Header + Command.  Ornek: 0xAA+0x20=0xCA (SIT), 0xAA+0x24=0xCE (DURDUR)
+//   NOT: EK-7 Tablo 1'deki 0x8C/0x8E/0x90 degerleri HATALI. Gercek cihaz (logic analyzer
+//        ile dogrulandi) Header+Command gonderiyor. O yuzden o tabloya GUVENME.
 #define SITSUT_HEADER        0xAA
 #define SITSUT_DATA_HEADER   0xAB
 #define SITSUT_FOOTER1       0x0D
 #define SITSUT_FOOTER2       0x0A
 #define SITSUT_PAKET_BOYUT   5
 #define SITSUT_DATA_BOYUT    36
-#define SITSUT_CHK_OFFSET    0x6C  // Checksum = CMD + bu offset
 
 #define CMD_SIT_BASLAT       0x20  // Sensör İzleme Testi Başlat
 #define CMD_SUT_BASLAT       0x22  // Sentetik Uçuş Testi Başlat
@@ -177,6 +179,14 @@ unsigned long kalkis_zaman = 0;          // Kalkis aninin millis() degeri (durum
 
 // SUT durum bilgilendirme bitleri (Tablo 5) — Core 0'da guncellenir, latch mantigi
 volatile uint16_t durum_bitleri = 0;
+
+// --- SUT TEZGAH TESTI: FÜNYE YERINE LED ---
+// 1 = SUT modunda gercek fünye pinini SÜRME, sadece LED yak (tezgah testi — GÜVENLİ)
+// 0 = SUT modunda gercek fünyeyi de atesle (Aksaray'daki GERÇEK test cihazi olcumu icin ŞART!)
+//   NOT: SİT ve gercek ucusta bu bayraktan bagimsiz olarak fünye normal calisir.
+#define SUT_FUNYE_YERINE_LED   1
+#define PIN_LED_DROGUE   PIN_LED_1   // GPIO26 — 1. ayrilma (drogue/suruklenme) gostergesi
+#define PIN_LED_ANA      PIN_LED_2   // GPIO4  — 2. ayrilma (ana parasut) gostergesi
 
 // --- FÜNYE ZAMANLAMA (Non-Blocking) ---
 #define FUNYE_SURE_MS 400  // Fünyeye enerji verilecek süre (ms)
@@ -294,6 +304,8 @@ struct SitPaketi {
 QueueHandle_t telemetryQueue;
 File logFile;
 bool sdOk = false;
+bool bnoOk = false;   // BNO055 bulundu/hazir mi? (yoksa Task1 IMU okumasini atlar)
+bool bmeOk = false;   // BME280 bulundu/hazir mi? (yoksa Task1 barometre okumasini atlar)
 
 // Hazır Kullanılacak Metodlar/Fonksiyonlar
 
@@ -301,7 +313,13 @@ bool sdOk = false;
 // 400ms sonra funye_guncelle() otomatik kapatır.
 void Funye1Atesle(){
     if (!funye1_aktif) {
-        digitalWrite(PIN_FUNYE_1, HIGH);
+        // Gorsel gosterge: drogue LED'i her modda yakilir (latch — Durdur'a kadar yanik kalir)
+        digitalWrite(PIN_LED_DROGUE, HIGH);
+        // SUT tezgah testinde (bayrak 1 iken) gercek fünyeyi ATESLEME — sadece LED.
+        // SİT, gercek ucus ve bayrak 0 iken gercek fünye pini surulur.
+        if (!(SUT_FUNYE_YERINE_LED && sitSutMod == MOD_SUT)) {
+            digitalWrite(PIN_FUNYE_1, HIGH);
+        }
         funye1_baslangic = millis();
         funye1_aktif = true;
         ayrilma1 = true;
@@ -310,7 +328,11 @@ void Funye1Atesle(){
 
 void Funye2Atesle(){
     if (!funye2_aktif) {
-        digitalWrite(PIN_FUNYE_2, HIGH);
+        // Gorsel gosterge: ana parasut LED'i her modda yakilir (latch)
+        digitalWrite(PIN_LED_ANA, HIGH);
+        if (!(SUT_FUNYE_YERINE_LED && sitSutMod == MOD_SUT)) {
+            digitalWrite(PIN_FUNYE_2, HIGH);
+        }
         funye2_baslangic = millis();
         funye2_aktif = true;
         ayrilma2 = true;
@@ -428,7 +450,9 @@ void gonder_sit_paketi() {
     SitPaketi pkt;
     pkt.header  = 0xAB;
     pkt.irtifa  = yuvarla2(irtifa);
-    pkt.basinc  = yuvarla2(basinc);
+    // Ek-7 Tablo 2: basinc birimi mBar (=hPa). bme.readPressure() Pascal doner,
+    // bu yuzden /100 ile hPa'ya cevriliyor (Pa ~100727 -> hPa ~1007.27).
+    pkt.basinc  = yuvarla2(basinc / 100.0f);
     pkt.ivmeX   = yuvarla2(ivmeX);
     pkt.ivmeY   = yuvarla2(ivmeY);
     pkt.ivmeZ   = yuvarla2(ivmeZ);
@@ -436,8 +460,9 @@ void gonder_sit_paketi() {
     pkt.aciY    = yuvarla2(pitch);  // AÇI Y = Pitch
     pkt.aciZ    = yuvarla2(yaw);    // AÇI Z = Yaw
 
-    // Checksum hesapla: 8 float (32 byte) payload toplamı
-    uint8_t chk = 0;
+    // Checksum = checksum'dan ONCEKI tum byte'larin toplami (mod 256):
+    //   Header (0xAB) + 32 byte payload.  Komut checksum'i ile ayni kural (Header dahil).
+    uint8_t chk = pkt.header;   // 0xAB
     const uint8_t* payload = (const uint8_t*)&pkt.irtifa;
     for (size_t i = 0; i < 32; i++) {
         chk += payload[i];
@@ -456,7 +481,8 @@ void gonder_sit_paketi() {
 void gonder_durum_paketi() {
     uint8_t data1 = (uint8_t)(durum_bitleri & 0xFF);
     uint8_t data2 = (uint8_t)((durum_bitleri >> 8) & 0xFF);
-    uint8_t chk   = (uint8_t)(data1 + data2);
+    // Checksum = onceki byte'larin toplami: Header (0xAA) + Data1 + Data2 (mod 256)
+    uint8_t chk   = (uint8_t)(SITSUT_HEADER + data1 + data2);
     uint8_t paket[SITSUT_DURUM_BOYUT] = {
         SITSUT_HEADER, data1, data2, chk, SITSUT_FOOTER1, SITSUT_FOOTER2
     };
@@ -487,36 +513,48 @@ void Task1code(void *pvParameters) {
             kalkis_zaman      = 0;
             onceki_zaman      = 0;      // dikey hız hesaplayıcı yeniden başlasın
             anlik_dikey_hiz   = 0.0;
+            // Fünye/LED durumunu temizle — tekrarli SUT icin temiz baslangic
+            funye1_aktif = false;
+            funye2_aktif = false;
+            digitalWrite(PIN_FUNYE_1, LOW);
+            digitalWrite(PIN_FUNYE_2, LOW);
+            digitalWrite(PIN_LED_DROGUE, LOW);
+            digitalWrite(PIN_LED_ANA, LOW);
         }
         onceki_mod = simdiki_mod;
     }
 
     // 1. Sensör Verilerini Okuma (SUT modunda değilsek donanımdan oku)
     if (sitSutMod != MOD_SUT) {
-        sensors_event_t a, g, o;
-        // İvme (Linear Acceleration - Yerçekimi hariç)
-        bno.getEvent(&a, Adafruit_BNO055::VECTOR_LINEARACCEL);
-        ivmeX = kf_ivmeX.updateEstimate(a.acceleration.x);
-        ivmeY = kf_ivmeY.updateEstimate(a.acceleration.y);
-        ivmeZ = kf_ivmeZ.updateEstimate(a.acceleration.z);
+        // IMU (BNO055) — yalnizca sensor bulunduysa oku (yoksa deger 0 kalir)
+        if (bnoOk) {
+            sensors_event_t a, g, o;
+            // İvme (Linear Acceleration - Yerçekimi hariç)
+            bno.getEvent(&a, Adafruit_BNO055::VECTOR_LINEARACCEL);
+            ivmeX = kf_ivmeX.updateEstimate(a.acceleration.x);
+            ivmeY = kf_ivmeY.updateEstimate(a.acceleration.y);
+            ivmeZ = kf_ivmeZ.updateEstimate(a.acceleration.z);
 
-        // Jiroskop
-        bno.getEvent(&g, Adafruit_BNO055::VECTOR_GYROSCOPE);
-        gyroX = kf_gyroX.updateEstimate(g.gyro.x);
-        gyroY = kf_gyroY.updateEstimate(g.gyro.y);
-        gyroZ = kf_gyroZ.updateEstimate(g.gyro.z);
+            // Jiroskop
+            bno.getEvent(&g, Adafruit_BNO055::VECTOR_GYROSCOPE);
+            gyroX = kf_gyroX.updateEstimate(g.gyro.x);
+            gyroY = kf_gyroY.updateEstimate(g.gyro.y);
+            gyroZ = kf_gyroZ.updateEstimate(g.gyro.z);
 
-        // Euler Açıları (Yönelim)
-        bno.getEvent(&o, Adafruit_BNO055::VECTOR_EULER);
-        yaw = kf_yaw.updateEstimate(o.orientation.x);
-        roll = kf_roll.updateEstimate(o.orientation.y);
-        pitch = kf_pitch.updateEstimate(o.orientation.z);
+            // Euler Açıları (Yönelim)
+            bno.getEvent(&o, Adafruit_BNO055::VECTOR_EULER);
+            yaw = kf_yaw.updateEstimate(o.orientation.x);
+            roll = kf_roll.updateEstimate(o.orientation.y);
+            pitch = kf_pitch.updateEstimate(o.orientation.z);
+        }
 
-        // 2. Barometre (BME280) Verilerini Okuma
-        bmeSicaklik = kf_bmeSicaklik.updateEstimate(bme.readTemperature());
-        basinc = kf_basinc.updateEstimate(bme.readPressure());
-        nem = kf_nem.updateEstimate(bme.readHumidity());
-        irtifa = kf_irtifa.updateEstimate(bme.readAltitude(referans_basinc));
+        // 2. Barometre (BME280) Verilerini Okuma — yalnizca sensor bulunduysa
+        if (bmeOk) {
+            bmeSicaklik = kf_bmeSicaklik.updateEstimate(bme.readTemperature());
+            basinc = kf_basinc.updateEstimate(bme.readPressure());
+            nem = kf_nem.updateEstimate(bme.readHumidity());
+            irtifa = kf_irtifa.updateEstimate(bme.readAltitude(referans_basinc));
+        }
 
         // 3. GPS Verilerini Okuma
         while (Serial2.available() > 0) {
@@ -626,12 +664,28 @@ void Task1code(void *pvParameters) {
     //   MOD_SIT → Tablo 3 telemetri paketi (36 byte)
     //   MOD_SUT → Tablo 6 durum bilgilendirme paketi (6 byte)
     static unsigned long son_ttl_gonderim = 0;
+    static uint8_t lora_debug_sayac = 0;   // TTL gonderimlerini ~1 Hz LoRa'ya aynalamak icin
     if (millis() - son_ttl_gonderim >= SITSUT_GONDERIM_PERIYOT_MS) {
         son_ttl_gonderim = millis();
+        // DEBUG AYNA: her 10. gonderimde (~1 Hz) LoRa'ya ozet bas — 9600 baud'u tikamamak icin
+        bool lora_yaz = (++lora_debug_sayac >= 10);
+        if (lora_yaz) lora_debug_sayac = 0;
         if (sitSutMod == MOD_SIT) {
             gonder_sit_paketi();     // 36 byte, Serial (UART0)
+            if (lora_yaz) {
+                Serial1.print("[TTL-TX SIT] irt="); Serial1.print(irtifa, 2);
+                Serial1.print(" bas=");             Serial1.print(basinc / 100.0f, 2);
+                Serial1.print(" ivZ=");             Serial1.print(ivmeZ, 2);
+                Serial1.print(" aciZ=");            Serial1.println(yaw, 2);
+            }
         } else if (sitSutMod == MOD_SUT) {
             gonder_durum_paketi();   // 6 byte durum paketi, Serial (UART0)
+            if (lora_yaz) {
+                Serial1.print("[TTL-TX DURUM] 0x");
+                Serial1.print(durum_bitleri, HEX);
+                Serial1.print(" irt=");  Serial1.print(irtifa, 2);
+                Serial1.print(" durum="); Serial1.println((int)durum);
+            }
         }
     }
 
@@ -710,7 +764,21 @@ void Task2code(void *pvParameters) {
           if (beklenen_boyut == SITSUT_PAKET_BOYUT) {
               uint8_t cmd = ttl_buf[1];
               uint8_t chk = ttl_buf[2];
-              if (ttl_buf[3] == SITSUT_FOOTER1 && ttl_buf[4] == SITSUT_FOOTER2 && chk == (uint8_t)(cmd + SITSUT_CHK_OFFSET)) {
+
+              // --- DEBUG AYNA: gelen komutu LoRa'ya bas (TTL/RS232 hattini gormek icin) ---
+              // RS232 sorunluyken firmware'in komutu gercekten alip almadigini LoRa'dan izlersin.
+              Serial1.print("[TTL-RX komut] ");
+              for (int i = 0; i < 5; i++) {
+                  if (ttl_buf[i] < 0x10) Serial1.print('0');
+                  Serial1.print(ttl_buf[i], HEX);
+                  Serial1.print(' ');
+              }
+              bool footer_ok = (ttl_buf[3] == SITSUT_FOOTER1 && ttl_buf[4] == SITSUT_FOOTER2);
+              // Checksum = Header + Command (onceki byte'larin toplami) — logic analyzer ile dogrulandi
+              bool chk_ok    = (chk == (uint8_t)(SITSUT_HEADER + cmd));
+
+              if (footer_ok && chk_ok) {
+                  Serial1.println("-> GECERLI");
                   switch (cmd) {
                       // Başlat komutları: 1 sn sonra aktif ol (Uygulama Planı c)
                       case CMD_SIT_BASLAT:
@@ -731,9 +799,18 @@ void Task2code(void *pvParameters) {
                           sitSutMod           = MOD_BEKLEME;
                           Serial1.println("[STOP] DURDURULDU");
                           break;
+                      default:
+                          Serial1.println("[?] Bilinmeyen komut");
+                          break;
                   }
+              } else {
+                  // Komut geldi ama gecersiz — nedenini LoRa'ya yaz
+                  Serial1.print("-> RED (");
+                  if (!footer_ok) Serial1.print("footer ");
+                  if (!chk_ok)    Serial1.print("checksum ");
+                  Serial1.println(")");
               }
-          } 
+          }
           // PAKET TİPİ: SUT VERİSİ (36 Byte)
           else if (beklenen_boyut == SITSUT_DATA_BOYUT) {
               if (ttl_buf[34] == SITSUT_FOOTER1 && ttl_buf[35] == SITSUT_FOOTER2) {
@@ -834,6 +911,9 @@ void setup() {
     pinMode(PIN_LED_1, OUTPUT);
     pinMode(PIN_LED_2, OUTPUT);
     pinMode(PIN_LED_3, OUTPUT);
+    // Drogue/Ana gosterge LED'lerini basta sondur
+    digitalWrite(PIN_LED_DROGUE, LOW);
+    digitalWrite(PIN_LED_ANA, LOW);
     pinMode(PIN_SDKART_DET, INPUT_PULLUP); // SD kart algılama genelde pull-up gerektirir
 
     // 3. Protokoller
@@ -868,21 +948,23 @@ void setup() {
     }
 
     // Sensör Başlatma İşlemleri
-    if (!bno.begin()) {
-        Serial1.println("KRITIK: BNO055 bulunamadi! Sistem durduruluyor.");
-        while(true) { vTaskDelay(1000 / portTICK_PERIOD_MS); }
-    }
-    Serial1.println("BNO055 baslatildi.");
-    // BNO055'i harici kristal kullanmaya ayarlamak okumaları daha stabil yapar
-    bno.setExtCrystalUse(true);
+    // ÖNEMLİ: Sensör bulunamazsa ARTIK sistemi durdurmuyoruz. Aksi halde SİT/SUT
+    // komutlarını dinleyen Task2 hiç başlamaz ve test cihazı hiçbir yanıt alamaz.
+    // Sensör yoksa sadece uyarı basılır; SUT zaten sensörleri yok sayar, SİT'te de
+    // ilgili veriler 0 gönderilir. Bayraklar Task1'in okumayı atlamasını sağlar.
+    if (bno.begin()) {
+        bnoOk = true;
+        // BNO055'i harici kristal kullanmaya ayarlamak okumaları daha stabil yapar
+        bno.setExtCrystalUse(true);
+        Serial1.println("BNO055 baslatildi.");
 
-    // BNO055 Kalibrasyon Kalitesi Bekleme
-    // begin() başarılı olsa bile kalibrasyon dakikalar alabilir.
-    // Kalibre olmamış sensorden apogee kararı vermek tehlikelidir.
-    Serial1.println("BNO055 kalibrasyonu bekleniyor...");
-    {
+        // BNO055 Kalibrasyon Kalitesi Bekleme — SÜRE SINIRLI (max ~10 sn)
+        // Test tezgahinda kalibrasyon sys>=1'e hic ulasmayabilir; sonsuz beklemek
+        // yerine sinirli bekleyip devam ediyoruz (ucusta kalibrasyon icin ayri onlem alin).
+        Serial1.println("BNO055 kalibrasyonu bekleniyor (max 10sn)...");
         uint8_t cal_sys = 0, cal_gyro = 0, cal_accel = 0, cal_mag = 0;
-        while (cal_sys < BNO055_MIN_KALIBRASYON) {
+        unsigned long kal_baslangic = millis();
+        while (cal_sys < BNO055_MIN_KALIBRASYON && (millis() - kal_baslangic) < 10000) {
             bno.getCalibration(&cal_sys, &cal_gyro, &cal_accel, &cal_mag);
             char buf[80];
             snprintf(buf, sizeof(buf), "Kal: Sys=%d/3 Gyro=%d/3 Accel=%d/3 Mag=%d/3",
@@ -890,36 +972,41 @@ void setup() {
             Serial1.println(buf);
             vTaskDelay(500 / portTICK_PERIOD_MS);
         }
+        Serial1.println(cal_sys >= BNO055_MIN_KALIBRASYON
+                        ? "BNO055 kalibrasyonu tamamlandi!"
+                        : "UYARI: BNO055 kalibrasyon zaman asimi, yine de devam.");
+    } else {
+        bnoOk = false;
+        Serial1.println("UYARI: BNO055 bulunamadi! IMU verileri 0 gonderilecek (SUT etkilenmez).");
     }
-    Serial1.println("BNO055 kalibrasyonu tamamlandi!");
 
     // BME280 genelde 0x76 veya 0x77 I2C adresi kullanır
-    if (!bme.begin(BME280_ADDR_PRIMARY) && !bme.begin(BME280_ADDR_SECONDARY)) {
-        Serial1.println("KRITIK: BME280 bulunamadi! Sistem durduruluyor.");
-        while(true) { vTaskDelay(1000 / portTICK_PERIOD_MS); }
-    }
-    Serial1.println("BME280 baslatildi.");
-    // Gelişmiş okuma ayarları (BME280)
-    bme.setSampling(Adafruit_BME280::MODE_NORMAL,
-                    Adafruit_BME280::SAMPLING_X2,  // Sicaklik
-                    Adafruit_BME280::SAMPLING_X16, // Basinc
-                    Adafruit_BME280::SAMPLING_X1,  // Nem
-                    Adafruit_BME280::FILTER_X16,
-                    Adafruit_BME280::STANDBY_MS_0_5);
+    if (bme.begin(BME280_ADDR_PRIMARY) || bme.begin(BME280_ADDR_SECONDARY)) {
+        bmeOk = true;
+        Serial1.println("BME280 baslatildi.");
+        // Gelişmiş okuma ayarları (BME280)
+        bme.setSampling(Adafruit_BME280::MODE_NORMAL,
+                        Adafruit_BME280::SAMPLING_X2,  // Sicaklik
+                        Adafruit_BME280::SAMPLING_X16, // Basinc
+                        Adafruit_BME280::SAMPLING_X1,  // Nem
+                        Adafruit_BME280::FILTER_X16,
+                        Adafruit_BME280::STANDBY_MS_0_5);
 
-    // 3.1 Ground Kalibrasyon: Anlık yer seviyesi basıncını ölç (20 örnek ortalaması)
-    delay(200);
-    Serial1.println("Yer kalibrasyonu yapiliyor...");
-    float basinc_toplam = 0.0;
-    for (int i = 0; i < 20; i++) {
-        basinc_toplam += bme.readPressure() / 100.0F; // Pascal → hPa
-        delay(50);
-    }
-    referans_basinc = basinc_toplam / 20.0;
-    {
+        // 3.1 Ground Kalibrasyon: Anlık yer seviyesi basıncını ölç (20 örnek ortalaması)
+        delay(200);
+        Serial1.println("Yer kalibrasyonu yapiliyor...");
+        float basinc_toplam = 0.0;
+        for (int i = 0; i < 20; i++) {
+            basinc_toplam += bme.readPressure() / 100.0F; // Pascal → hPa
+            delay(50);
+        }
+        referans_basinc = basinc_toplam / 20.0;
         char buf[40];
         snprintf(buf, sizeof(buf), "Referans Basinc (hPa): %.2f", referans_basinc);
         Serial1.println(buf);
+    } else {
+        bmeOk = false;
+        Serial1.println("UYARI: BME280 bulunamadi! Barometre verileri 0 gonderilecek (SUT etkilenmez).");
     }
 
     // FreeRTOS Kuyruk Başlatma (Maksimum 10 paketlik yer ayıralım)

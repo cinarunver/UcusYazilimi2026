@@ -12,7 +12,9 @@ HEADER_CMD = 0xAA    # Komut (PC->UKB) ve Durum paketi (UKB->PC) header'ı
 HEADER_DATA = 0xAB   # SİT telemetri ve SUT veri header'ı
 FOOTER1 = 0x0D
 FOOTER2 = 0x0A
-CHK_OFFSET = 0x6C
+# Checksum = checksum'dan ONCEKI tum byte'larin toplami (mod 256) — EK-7 Bolum 3.
+# Komut icin: Header + Command (logic analyzer ile dogrulandi: 0xAA+0x20=0xCA).
+# EK-7 Tablo 1'deki 0x8C/0x8E/0x90 HATALI, kullanma.
 
 CMD_SIT_BASLAT = 0x20
 CMD_SUT_BASLAT = 0x22
@@ -70,27 +72,98 @@ class RocketTester:
             sys.exit()
         
         self.running = True
+        self.raw = False   # True iken gelen HER byte hex+ascii olarak basilir (teshis modu)
         self.read_thread = threading.Thread(target=self.receive_loop, daemon=True)
         self.read_thread.start()
 
     def send_command(self, cmd_byte):
-        chk = (cmd_byte + CHK_OFFSET) & 0xFF
+        chk = (HEADER_CMD + cmd_byte) & 0xFF   # Header + Command
         packet = struct.pack("BBBBB", HEADER_CMD, cmd_byte, chk, FOOTER1, FOOTER2)
         self.ser.write(packet)
-        print(f"\n>> Komut Gönderildi: {hex(cmd_byte)}")
+        print(f"\n>> Komut Gönderildi: {hex(cmd_byte)} (chk={hex(chk)})")
 
     def send_sut_data(self, alt, press, ax, ay, az, roll, pitch, yaw):
         payload = struct.pack("<ffffffff", alt, press, ax, ay, az, roll, pitch, yaw)
-        chk = sum(payload) & 0xFF
+        chk = (HEADER_DATA + sum(payload)) & 0xFF   # Header (0xAB) + payload
         packet = struct.pack("B", HEADER_DATA) + payload + struct.pack("BBB", chk, FOOTER1, FOOTER2)
         self.ser.write(packet)
+
+    def run_sut_scenario(self):
+        """Tam sentetik ucus profili: kalkis -> apogee -> drogue -> ana parasut -> inis.
+        Deger esikleri UKB firmware'i ile uyumlu secilmistir:
+          - Kalkis:  ivmeZ > 20 m/s^2  (KALKIS_IVME_ESIGI)
+          - Apogee:  max_irtifa - irtifa > 15 m ve dikey hiz < 0 ve egim < 10 deg
+          - Ana par: irtifa < 550 m ve max_irtifa > 550 m  (AYRILMA2_MESAFE)
+          - Inis:    dikey hiz ~0 ve irtifa < 20 m
+        """
+        P0 = 1013.25
+        dt = 0.05          # 20 Hz gonderim (< 1 sn Test Timeout)
+        TAVAN = 2000.0     # apogee irtifasi (m)
+
+        def basinc_hesap(h):
+            # Basit barometrik model (UKB SUT'ta basinci karar icin kullanmaz, gorsel amacli)
+            return P0 * pow(max(0.0, 1.0 - 2.25577e-5 * h), 5.25588)
+
+        print("\n>> SENARYO: SUT baslatiliyor, UKB 1 sn sonra aktif olacak...")
+        self.send_command(CMD_SUT_BASLAT)
+        time.sleep(1.2)    # Uygulama Plani (c): komut onayindan 1 sn sonra SUT aktif
+
+        # --- Faz 1: Rampa / Kalkis tetigi (ivmeZ > 20) ---
+        print(">> Faz 1: Kalkis (ivmeZ=30 m/s^2)")
+        for _ in range(10):   # ~0.5 sn yuksek ivme
+            self.send_sut_data(0.0, basinc_hesap(0.0), 0.0, 0.0, 30.0, 0.0, 0.0, 0.0)
+            time.sleep(dt)
+
+        # --- Faz 2: Yukselis 0 -> TAVAN ---
+        print(">> Faz 2: Yukselis 0 -> %.0f m" % TAVAN)
+        h = 0.0
+        while h < TAVAN:
+            h = min(TAVAN, h + 40.0)
+            az = max(0.0, 15.0 - h / 200.0)      # motor sonrasi ivme azaliyor
+            self.send_sut_data(h, basinc_hesap(h), 0.0, 0.0, az, 0.0, 0.0, 0.0)
+            time.sleep(dt)
+
+        # --- Faz 3: Inis TAVAN -> 0 (apogee, drogue, ana parasut burada tetiklenir) ---
+        print(">> Faz 3: Inis %.0f -> 0 m (kurtarma sinyalleri bekleniyor)" % TAVAN)
+        while h > 0.0:
+            h = max(0.0, h - 25.0)
+            self.send_sut_data(h, basinc_hesap(h), 0.0, 0.0, -3.0, 0.0, 0.0, 0.0)
+            time.sleep(dt)
+
+        # --- Faz 4: Yerde (inis tespiti icin sabit + hiz ~0) ---
+        print(">> Faz 4: Yer temasi")
+        for _ in range(15):
+            self.send_sut_data(0.0, basinc_hesap(0.0), 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+            time.sleep(dt)
+
+        print("\n>> Senaryo tamamlandi. Durum bitleri yukarida izlendi. Bitirmek icin '3' (Durdur).")
+
+    def raw_dinle(self, saniye, komut=None):
+        """Komut gonderir (opsiyonel) ve <saniye> boyunca gelen HER byte'i ham gosterir.
+        UKB'den bir sey gelip gelmedigini (paket bozuk olsa bile) gormek icin."""
+        if komut is not None:
+            self.send_command(komut)
+        print(f">> {saniye} sn ham dinleme basladi... (gelen her byte hex+ascii)")
+        self.raw = True
+        time.sleep(saniye)
+        self.raw = False
+        print(">> Ham dinleme bitti.")
 
     def receive_loop(self):
         # Byte akışını header'a göre ayrıştırır:
         #   0xAB + 35 byte -> SİT telemetri paketi (Tablo 3, 36 byte)
         #   0xAA + 5  byte -> SUT durum bilgilendirme paketi (Tablo 6, 6 byte)
+        # RAW modunda (self.raw) hicbir sey ayristirilmaz, gelen her byte dokulur.
         while self.running:
             try:
+                if self.raw:
+                    d = self.ser.read(64)
+                    if d:
+                        hx = d.hex(" ").upper()
+                        asc = "".join(chr(x) if 32 <= x < 127 else "." for x in d)
+                        print(f"[RAW] {hx}   | {asc}")
+                    continue
+
                 b = self.ser.read(1)
                 if not b:
                     continue
@@ -125,7 +198,9 @@ def main():
     print("1: SIT Başlat (Sensör Verilerini İzle)")
     print("2: SUT Başlat (Yapay Veri Girişi Hazırla)")
     print("3: Durdur (Testi Bitir)")
-    print("4: SUT Senaryosu (Uçuş Simülasyonu - 100m -> 2000m)")
+    print("4: SUT Senaryosu (Uçuş Simülasyonu - kalkış→apogee→iniş)")
+    print("5: TEŞHİS — SIT gönder + 10 sn HAM hex dinle (gelen ne varsa yaz)")
+    print("6: TEŞHİS — komutsuz 10 sn HAM hex dinle")
     print("Q: Çıkış (veya Enter)")
 
     try:
@@ -143,12 +218,11 @@ def main():
             elif choice == '3':
                 tester.send_command(CMD_DURDUR)
             elif choice == '4':
-                print(">> Simülasyon Senaryosu Koşuluyor...")
-                tester.send_command(CMD_SUT_BASLAT)
-                for h in range(100, 2000, 25):
-                    tester.send_sut_data(float(h), 1013.25 - (h/8.5), 0.0, 0.0, 20.0, 0.0, 0.0, 0.0)
-                    time.sleep(0.05) 
-                print("\n>> Senaryo Tamamlandı.")
+                tester.run_sut_scenario()
+            elif choice == '5':
+                tester.raw_dinle(10, komut=CMD_SIT_BASLAT)
+            elif choice == '6':
+                tester.raw_dinle(10)
     except KeyboardInterrupt:
         pass
     finally:
