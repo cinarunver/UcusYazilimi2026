@@ -127,7 +127,7 @@ void setup() {
         Serial.println(F("[HATA] BNO055 bulunamadi! I2C baglantiyi kontrol et."));
         while (true) { delay(1000); }
     }
-    bno.setExtCrystalUse(true);
+    // NOT: setExtCrystalUse KULLANILMAZ — klon/kullanilan modulde harici kristal yok.
     Serial.println(F("[OK]   BNO055 baslatildi."));
 
     // ---------- BME280 BAŞLAT ----------

@@ -83,7 +83,8 @@ class RocketTester:
         print(f"\n>> Komut Gönderildi: {hex(cmd_byte)} (chk={hex(chk)})")
 
     def send_sut_data(self, alt, press, ax, ay, az, roll, pitch, yaw):
-        payload = struct.pack("<ffffffff", alt, press, ax, ay, az, roll, pitch, yaw)
+        # Ek-7: FLOAT32 alanlar BIG ENDIAN (>) — MSB first
+        payload = struct.pack(">ffffffff", alt, press, ax, ay, az, roll, pitch, yaw)
         chk = (HEADER_DATA + sum(payload)) & 0xFF   # Header (0xAB) + payload
         packet = struct.pack("B", HEADER_DATA) + payload + struct.pack("BBB", chk, FOOTER1, FOOTER2)
         self.ser.write(packet)
@@ -171,7 +172,8 @@ class RocketTester:
                 if b == b'\xab':
                     data = self.ser.read(35)
                     if len(data) == 35 and data[-2:] == b'\r\n':
-                        vals = struct.unpack("<ffffffff", data[0:32])
+                        # Ek-7: FLOAT32 alanlar BIG ENDIAN (>) — MSB first
+                        vals = struct.unpack(">ffffffff", data[0:32])
                         print(f"\r[SİT] Irtifa:{vals[0]:.2f}m Basinc:{vals[1]:.2f}hPa "
                               f"ivX:{vals[2]:.2f} ivY:{vals[3]:.2f} ivZ:{vals[4]:.2f} "
                               f"aciX:{vals[5]:.2f} aciY:{vals[6]:.2f} aciZ:{vals[7]:.2f}      ", end="")

@@ -88,10 +88,10 @@ float referans_basinc = 1013.25;
 
 // --- SİT/SUT KOMUT PROTOKOLÜ ---
 // Format: [HEADER:0xAA][COMMAND:1B][CHECKSUM:1B][FOOTER1:0x0D][FOOTER2:0x0A]
-// Checksum = checksum'dan ONCEKI tum byte'larin toplami (mod 256) — EK-7 Bolum 3.
-//   Komut icin: Header + Command.  Ornek: 0xAA+0x20=0xCA (SIT), 0xAA+0x24=0xCE (DURDUR)
-//   NOT: EK-7 Tablo 1'deki 0x8C/0x8E/0x90 degerleri HATALI. Gercek cihaz (logic analyzer
-//        ile dogrulandi) Header+Command gonderiyor. O yuzden o tabloya GUVENME.
+// Checksum: parser IKI konvansiyonu da kabul eder (sikinti yasamamak icin):
+//   (a) Header + Command = 0xAA + cmd  -> SIT=0xCA, SUT=0xCC, DURDUR=0xCE (logic analyzer)
+//   (b) Ek-7 Tablo 1: Command + 0x6C   -> SIT=0x8C, SUT=0x8E, DURDUR=0x90
+//   Karsi cihaz hangisini gonderirse gondersin komut kabul edilir.
 #define SITSUT_HEADER        0xAA
 #define SITSUT_DATA_HEADER   0xAB
 #define SITSUT_FOOTER1       0x0D
@@ -103,6 +103,15 @@ float referans_basinc = 1013.25;
 #define CMD_SUT_BASLAT       0x22  // Sentetik Uçuş Testi Başlat
 #define CMD_DURDUR           0x24  // Testi Durdur
 
+// --- KOMUT CHECKSUM DEGERLERI (Tablo 1) — hazir sabitler ---
+// Iki konvansiyon da kabul edilir (asagida parser'da kontrol edilir):
+//   (a) Ek-7 Tablo 1:        Command + 0x6C  -> 0x8C / 0x8E / 0x90
+//   (b) Logic analyzer olcum: Header + Command (0xAA+cmd) -> 0xCA / 0xCC / 0xCE
+#define CHK_SIT_T1           0x8C  // 0x20 + 0x6C  (Ek-7 Tablo 1)
+#define CHK_SUT_T1           0x8E  // 0x22 + 0x6C  (Ek-7 Tablo 1)
+#define CHK_DURDUR_T1        0x90  // 0x24 + 0x6C  (Ek-7 Tablo 1)
+#define KOMUT_CHK_OFFSET     0x6C  // Tablo 1 checksum ofseti (Command + 0x6C)
+
 // --- ORTAK ZAMANLAMA (Ek-7) ---
 #define TEST_AKTIVASYON_GECIKME_MS  1000  // Komut onaylandiktan sonra modun aktif olma gecikmesi (Uygulama Plani c)
 #define SITSUT_GONDERIM_PERIYOT_MS   100  // SİT telemetri + SUT durum paketi periyodu = 10 Hz (s.7)
@@ -110,7 +119,7 @@ float referans_basinc = 1013.25;
 
 // --- SUT DURUM BİLGİLENDİRME PAKETİ (Tablo 5 & 6) ---
 // Format: [HEADER=0xAA][Data1][Data2][Checksum][0x0D][0x0A] = 6 byte
-// Data1 = bit 0-7, Data2 = bit 8-15. Checksum = (Data1 + Data2) & 0xFF
+// Data1 = bit 0-7, Data2 = bit 8-15. Checksum = (Header + Data1 + Data2) & 0xFF
 // Bit=1 ilgili asamanin aktif oldugunu gosterir (Tablo 5).
 #define SITSUT_DURUM_BOYUT   6
 #define ST_BIT_KALKIS        (1u << 0)  // Bit 0: Roket kalkisi algilandi
@@ -396,29 +405,41 @@ uint16_t crc16_ccitt(const uint8_t* data, size_t len) {
     return crc;
 }
 
-// --- CSV FORMATINDA (METİN) GÖNDERME ---
-// SD karttan okunabilir format: veri1,veri2,veri3...
+// --- CSV FORMATINDA (METİN) GÖNDERME — TÜRKÇE EXCEL UYUMLU ---
+// Sutun ayraci ';', ondalik ','. Boylece Turkce Excel her degeri ayri sutuna koyar
+// ve sayilari GERCEK sayi olarak okur (grafik/formul calisir).
+// Bir float alani yazar: ondalik '.' -> ',' cevrilir, sonuna ';' ayraci konur.
+static void csv_alan(Print& port, float v, uint8_t basamak = 2) {
+    // buf: en kotu durumda (float ~3.4e38 glitch degeri) ~44 hane -> 52 guvenli sinir
+    char buf[52];
+    dtostrf(v, 0, basamak, buf);                 // "123.45"
+    for (char* p = buf; *p; ++p) if (*p == '.') *p = ',';  // -> "123,45"
+    port.print(buf);
+    port.print(';');
+}
+
 void gonder_paket_csv(Print& port, const TelemetryPacket& pkt) {
-    port.print(pkt.ivmeX); port.print(",");
-    port.print(pkt.ivmeY); port.print(",");
-    port.print(pkt.ivmeZ); port.print(",");
-    port.print(pkt.gyroX); port.print(",");
-    port.print(pkt.gyroY); port.print(",");
-    port.print(pkt.gyroZ); port.print(",");
-    port.print(pkt.roll); port.print(",");
-    port.print(pkt.pitch); port.print(",");
-    port.print(pkt.yaw); port.print(",");
-    port.print(pkt.basinc); port.print(",");
-    port.print(pkt.bmeSicaklik); port.print(",");
-    port.print(pkt.irtifa); port.print(",");
-    port.print(pkt.nem); port.print(",");
-    port.print(pkt.dikeyHiz); port.print(",");
-    port.print(pkt.eglimAcisi); port.print(",");
-    port.print(pkt.gpsEnlem, 6); port.print(","); 
-    port.print(pkt.gpsBoylam, 6); port.print(",");
-    port.print(pkt.ayrilma1_durum); port.print(",");
-    port.print(pkt.ayrilma2_durum); port.print(",");
-    port.println(pkt.ucus_durumu); // Son veri ve alt satıra geç
+    port.print(millis());  port.print(';');   // zaman_ms (yazma anindaki millis)
+    csv_alan(port, pkt.ivmeX);
+    csv_alan(port, pkt.ivmeY);
+    csv_alan(port, pkt.ivmeZ);
+    csv_alan(port, pkt.gyroX);
+    csv_alan(port, pkt.gyroY);
+    csv_alan(port, pkt.gyroZ);
+    csv_alan(port, pkt.roll);
+    csv_alan(port, pkt.pitch);
+    csv_alan(port, pkt.yaw);
+    csv_alan(port, pkt.basinc);
+    csv_alan(port, pkt.bmeSicaklik);
+    csv_alan(port, pkt.irtifa);
+    csv_alan(port, pkt.nem);
+    csv_alan(port, pkt.dikeyHiz);
+    csv_alan(port, pkt.eglimAcisi);
+    csv_alan(port, pkt.gpsEnlem, 6);
+    csv_alan(port, pkt.gpsBoylam, 6);
+    port.print(pkt.ayrilma1_durum); port.print(';');
+    port.print(pkt.ayrilma2_durum); port.print(';');
+    port.println(pkt.ucus_durumu); // Son alan (int) + alt satıra geç
 }
 
 // --- ÇERÇEVELI PAKET GÖNDERME (BINARY) ---
@@ -443,40 +464,63 @@ static inline float yuvarla2(float v) {
     return roundf(v * 100.0f) / 100.0f;
 }
 
+// --- ENDIANNESS DONUSUMU (Ek-7: veri BIG ENDIAN gonderilir) ---
+// ESP32 native little-endian'dir. Test cihazi FLOAT32/coklu-byte alanlari
+// BIG ENDIAN (MSB first) bekler. Bu yuzden telalde byte sirasi cevrilir.
+// float_to_be32: float'i big-endian 4 byte olarak out[] icine yazar.
+static inline void float_to_be32(float v, uint8_t* out) {
+    uint8_t tmp[4];
+    memcpy(tmp, &v, 4);   // native (little-endian): tmp[0]=LSB ... tmp[3]=MSB
+    out[0] = tmp[3];      // MSB first
+    out[1] = tmp[2];
+    out[2] = tmp[1];
+    out[3] = tmp[0];
+}
+// be32_to_float: big-endian 4 byte'i (in[]) float'a cevirir.
+static inline float be32_to_float(const uint8_t* in) {
+    uint8_t tmp[4];
+    tmp[0] = in[3];       // gelen MSB -> native LSB
+    tmp[1] = in[2];
+    tmp[2] = in[1];
+    tmp[3] = in[0];
+    float v;
+    memcpy(&v, tmp, 4);
+    return v;
+}
+
 // --- SİT PAKETİ GÖNDERME (TTL / UART0 / Serial) ---
 // Tablo 3'e göre 36 byte binary paket — Core 0'dan çağrılır
-// Checksum: Payload byte'larının toplamı (header ve footer hariç), low byte
+// FLOAT32 alanlar BIG ENDIAN (MSB first) gonderilir (Ek-7).
+// Checksum: Header (0xAB) + 32 byte payload toplamı (mod 256), footer hariç
 void gonder_sit_paketi() {
-    SitPaketi pkt;
-    pkt.header  = 0xAB;
-    pkt.irtifa  = yuvarla2(irtifa);
-    // Ek-7 Tablo 2: basinc birimi mBar (=hPa). bme.readPressure() Pascal doner,
-    // bu yuzden /100 ile hPa'ya cevriliyor (Pa ~100727 -> hPa ~1007.27).
-    pkt.basinc  = yuvarla2(basinc / 100.0f);
-    pkt.ivmeX   = yuvarla2(ivmeX);
-    pkt.ivmeY   = yuvarla2(ivmeY);
-    pkt.ivmeZ   = yuvarla2(ivmeZ);
-    pkt.aciX    = yuvarla2(roll);   // AÇI X = Roll
-    pkt.aciY    = yuvarla2(pitch);  // AÇI Y = Pitch
-    pkt.aciZ    = yuvarla2(yaw);    // AÇI Z = Yaw
+    uint8_t pkt[SITSUT_DATA_BOYUT];   // 36 byte
+    pkt[0] = 0xAB;                     // Byte 1  — Header
 
-    // Checksum = checksum'dan ONCEKI tum byte'larin toplami (mod 256):
-    //   Header (0xAB) + 32 byte payload.  Komut checksum'i ile ayni kural (Header dahil).
-    uint8_t chk = pkt.header;   // 0xAB
-    const uint8_t* payload = (const uint8_t*)&pkt.irtifa;
-    for (size_t i = 0; i < 32; i++) {
-        chk += payload[i];
-    }
-    pkt.checksum = chk;
-    pkt.footer1  = 0x0D;
-    pkt.footer2  = 0x0A;
+    // Byte 2-33: 8 x FLOAT32, big-endian. (Ek-7 Tablo 2: basinc birimi mBar=hPa,
+    // bme.readPressure() Pascal doner -> /100 ile hPa'ya cevriliyor.)
+    float_to_be32(yuvarla2(irtifa),            &pkt[1]);   // Byte 2-5   İRTİFA
+    float_to_be32(yuvarla2(basinc / 100.0f),   &pkt[5]);   // Byte 6-9   BASINÇ (mBar)
+    float_to_be32(yuvarla2(ivmeX),             &pkt[9]);   // Byte 10-13 İVME X
+    float_to_be32(yuvarla2(ivmeY),             &pkt[13]);  // Byte 14-17 İVME Y
+    float_to_be32(yuvarla2(ivmeZ),             &pkt[17]);  // Byte 18-21 İVME Z
+    float_to_be32(yuvarla2(roll),              &pkt[21]);  // Byte 22-25 AÇI X (Roll)
+    float_to_be32(yuvarla2(pitch),             &pkt[25]);  // Byte 26-29 AÇI Y (Pitch)
+    float_to_be32(yuvarla2(yaw),               &pkt[29]);  // Byte 30-33 AÇI Z (Yaw)
 
-    Serial.write((const uint8_t*)&pkt, sizeof(SitPaketi));
+    // Byte 34: Checksum = onceki tum byte'larin toplami (Header + 32 payload) mod 256.
+    // NOT: toplam byte sirasindan bagimsizdir, big-endian cevirisi checksum'i degistirmez.
+    uint8_t chk = 0;
+    for (int i = 0; i < 33; i++) chk += pkt[i];   // pkt[0..32] = Header + payload
+    pkt[33] = chk;
+    pkt[34] = 0x0D;   // Byte 35 — Footer 1
+    pkt[35] = 0x0A;   // Byte 36 — Footer 2
+
+    Serial.write(pkt, SITSUT_DATA_BOYUT);
 }
 
 // --- SUT DURUM BİLGİLENDİRME PAKETİ GÖNDERME (TTL / UART0 / Serial) ---
 // Tablo 6'ya göre 6 byte: [0xAA][Data1][Data2][CHK][0x0D][0x0A]
-// Data1 = durum_bitleri bit 0-7, Data2 = bit 8-15. CHK = (Data1+Data2)&0xFF.
+// Data1 = durum_bitleri bit 0-7, Data2 = bit 8-15. CHK = (Header+Data1+Data2)&0xFF.
 // Yalnızca SUT modunda 10 Hz gönderilir (Core 0'dan çağrılır).
 void gonder_durum_paketi() {
     uint8_t data1 = (uint8_t)(durum_bitleri & 0xFF);
@@ -664,28 +708,12 @@ void Task1code(void *pvParameters) {
     //   MOD_SIT → Tablo 3 telemetri paketi (36 byte)
     //   MOD_SUT → Tablo 6 durum bilgilendirme paketi (6 byte)
     static unsigned long son_ttl_gonderim = 0;
-    static uint8_t lora_debug_sayac = 0;   // TTL gonderimlerini ~1 Hz LoRa'ya aynalamak icin
     if (millis() - son_ttl_gonderim >= SITSUT_GONDERIM_PERIYOT_MS) {
         son_ttl_gonderim = millis();
-        // DEBUG AYNA: her 10. gonderimde (~1 Hz) LoRa'ya ozet bas — 9600 baud'u tikamamak icin
-        bool lora_yaz = (++lora_debug_sayac >= 10);
-        if (lora_yaz) lora_debug_sayac = 0;
         if (sitSutMod == MOD_SIT) {
             gonder_sit_paketi();     // 36 byte, Serial (UART0)
-            if (lora_yaz) {
-                Serial1.print("[TTL-TX SIT] irt="); Serial1.print(irtifa, 2);
-                Serial1.print(" bas=");             Serial1.print(basinc / 100.0f, 2);
-                Serial1.print(" ivZ=");             Serial1.print(ivmeZ, 2);
-                Serial1.print(" aciZ=");            Serial1.println(yaw, 2);
-            }
         } else if (sitSutMod == MOD_SUT) {
             gonder_durum_paketi();   // 6 byte durum paketi, Serial (UART0)
-            if (lora_yaz) {
-                Serial1.print("[TTL-TX DURUM] 0x");
-                Serial1.print(durum_bitleri, HEX);
-                Serial1.print(" irt=");  Serial1.print(irtifa, 2);
-                Serial1.print(" durum="); Serial1.println((int)durum);
-            }
         }
     }
 
@@ -764,21 +792,13 @@ void Task2code(void *pvParameters) {
           if (beklenen_boyut == SITSUT_PAKET_BOYUT) {
               uint8_t cmd = ttl_buf[1];
               uint8_t chk = ttl_buf[2];
-
-              // --- DEBUG AYNA: gelen komutu LoRa'ya bas (TTL/RS232 hattini gormek icin) ---
-              // RS232 sorunluyken firmware'in komutu gercekten alip almadigini LoRa'dan izlersin.
-              Serial1.print("[TTL-RX komut] ");
-              for (int i = 0; i < 5; i++) {
-                  if (ttl_buf[i] < 0x10) Serial1.print('0');
-                  Serial1.print(ttl_buf[i], HEX);
-                  Serial1.print(' ');
-              }
-              bool footer_ok = (ttl_buf[3] == SITSUT_FOOTER1 && ttl_buf[4] == SITSUT_FOOTER2);
-              // Checksum = Header + Command (onceki byte'larin toplami) — logic analyzer ile dogrulandi
-              bool chk_ok    = (chk == (uint8_t)(SITSUT_HEADER + cmd));
-
-              if (footer_ok && chk_ok) {
-                  Serial1.println("-> GECERLI");
+              // Iki checksum konvansiyonu da kabul edilir (sikinti yasamamak icin):
+              //   (a) Header + Command = 0xAA + cmd     -> 0xCA/0xCC/0xCE (logic analyzer)
+              //   (b) Ek-7 Tablo 1: Command + 0x6C      -> 0x8C/0x8E/0x90
+              uint8_t chk_hdr_cmd = (uint8_t)(SITSUT_HEADER + cmd);      // (a)
+              uint8_t chk_tablo1  = (uint8_t)(cmd + KOMUT_CHK_OFFSET);   // (b)
+              if (ttl_buf[3] == SITSUT_FOOTER1 && ttl_buf[4] == SITSUT_FOOTER2 &&
+                  (chk == chk_hdr_cmd || chk == chk_tablo1)) {
                   switch (cmd) {
                       // Başlat komutları: 1 sn sonra aktif ol (Uygulama Planı c)
                       case CMD_SIT_BASLAT:
@@ -799,42 +819,29 @@ void Task2code(void *pvParameters) {
                           sitSutMod           = MOD_BEKLEME;
                           Serial1.println("[STOP] DURDURULDU");
                           break;
-                      default:
-                          Serial1.println("[?] Bilinmeyen komut");
-                          break;
                   }
-              } else {
-                  // Komut geldi ama gecersiz — nedenini LoRa'ya yaz
-                  Serial1.print("-> RED (");
-                  if (!footer_ok) Serial1.print("footer ");
-                  if (!chk_ok)    Serial1.print("checksum ");
-                  Serial1.println(")");
               }
           }
           // PAKET TİPİ: SUT VERİSİ (36 Byte)
           else if (beklenen_boyut == SITSUT_DATA_BOYUT) {
               if (ttl_buf[34] == SITSUT_FOOTER1 && ttl_buf[35] == SITSUT_FOOTER2) {
-                  // Checksum doğrula — TOLERANSLI:
-                  // Ek-7 Bölüm 3 checksum'ın hangi byte'ları kapsadığını netleştirmiyor.
-                  // Bu yüzden iki yaygın yorumu da kabul ediyoruz:
-                  //   (a) chk_payload  = yalnızca 32 byte payload toplamı (header hariç)
-                  //   (b) chk_header   = 0xAB header dahil toplam
-                  // Resmi test cihazı hangisini kullanırsa kullansın paket geçerli sayılır.
+                  // Checksum = Header (0xAB) + 32 byte payload (mod 256) — diger paketlerle ayni kural.
+                  // chk_header canonical; chk_payload (header'siz) eski cihazlar icin tolerans olarak kabul.
                   uint8_t chk_payload = 0;
                   for (int i = 1; i <= 32; i++) chk_payload += ttl_buf[i];
-                  uint8_t chk_header = chk_payload + ttl_buf[0]; // + 0xAB
+                  uint8_t chk_header = chk_payload + ttl_buf[0]; // Header (0xAB) dahil = canonical
 
-                  if (ttl_buf[33] == chk_payload || ttl_buf[33] == chk_header) {
-                      // Verileri global değişkenlere dağıt
-                      SitPaketi* sut_data = (SitPaketi*)ttl_buf;
-                      irtifa = sut_data->irtifa;
-                      basinc = sut_data->basinc;
-                      ivmeX  = sut_data->ivmeX;
-                      ivmeY  = sut_data->ivmeY;
-                      ivmeZ  = sut_data->ivmeZ;
-                      roll   = sut_data->aciX;
-                      pitch  = sut_data->aciY;
-                      yaw    = sut_data->aciZ;
+                  if (ttl_buf[33] == chk_header || ttl_buf[33] == chk_payload) {
+                      // Verileri global değişkenlere dağıt.
+                      // Gelen FLOAT32'ler BIG ENDIAN (Ek-7) — be32_to_float ile cevrilir.
+                      irtifa = be32_to_float(&ttl_buf[1]);   // Byte 2-5
+                      basinc = be32_to_float(&ttl_buf[5]);   // Byte 6-9
+                      ivmeX  = be32_to_float(&ttl_buf[9]);    // Byte 10-13
+                      ivmeY  = be32_to_float(&ttl_buf[13]);   // Byte 14-17
+                      ivmeZ  = be32_to_float(&ttl_buf[17]);   // Byte 18-21
+                      roll   = be32_to_float(&ttl_buf[21]);   // Byte 22-25 (AÇI X)
+                      pitch  = be32_to_float(&ttl_buf[25]);   // Byte 26-29 (AÇI Y)
+                      yaw    = be32_to_float(&ttl_buf[29]);   // Byte 30-33 (AÇI Z)
                   }
               }
           }
@@ -934,12 +941,22 @@ void setup() {
         sdOk = false;
     } else {
         Serial1.println("SD Kart baslatildi.");
-        logFile = SD.open("/ucus_log.csv", FILE_APPEND);
+        // Her acilista ONCEKI loglarin uzerine YAZMA — bir sonraki bos numarayi bul.
+        // Ornek: ucus_log_7.csv varsa ucus_log_8.csv acilir. (max 9999 guvenlik siniri)
+        char yol[24];
+        int dosya_no = 0;
+        do {
+            dosya_no++;
+            snprintf(yol, sizeof(yol), "/ucus_log_%d.csv", dosya_no);
+        } while (SD.exists(yol) && dosya_no < 9999);
+
+        logFile = SD.open(yol, FILE_WRITE);   // yeni (bos) dosya
         if (logFile) {
-            // Dosya yeni oluşturulduysa veya boşsa başlık yaz
-            if (logFile.size() == 0) {
-                logFile.println("ivmeX,ivmeY,ivmeZ,gyroX,gyroY,gyroZ,roll,pitch,yaw,basinc,sicaklik,irtifa,nem,hiz,eglim,lat,lng,ayr1,ayr2,state");
-            }
+            char msg[48];
+            snprintf(msg, sizeof(msg), "Log dosyasi: %s", yol);
+            Serial1.println(msg);
+            // Yeni dosya -> Turkce Excel uyumlu baslik (ayrac ';'). zaman_ms ilk sutun.
+            logFile.println("zaman_ms;ivmeX;ivmeY;ivmeZ;gyroX;gyroY;gyroZ;roll;pitch;yaw;basinc;sicaklik;irtifa;nem;hiz;eglim;lat;lng;ayr1;ayr2;state");
             sdOk = true;
         } else {
             Serial1.println("HATA: Log dosyasi acilamadi!");
@@ -954,8 +971,6 @@ void setup() {
     // ilgili veriler 0 gönderilir. Bayraklar Task1'in okumayı atlamasını sağlar.
     if (bno.begin()) {
         bnoOk = true;
-        // BNO055'i harici kristal kullanmaya ayarlamak okumaları daha stabil yapar
-        bno.setExtCrystalUse(true);
         Serial1.println("BNO055 baslatildi.");
 
         // BNO055 Kalibrasyon Kalitesi Bekleme — SÜRE SINIRLI (max ~10 sn)
