@@ -143,6 +143,56 @@ float referans_basinc = 1013.25;
 // Core 0 queue → 100 Hz; LoRa → her LORA_GONDERIM_ORANI pakettte bir (≈10 Hz)
 #define LORA_GONDERIM_ORANI    10
 
+// --- SİT/SUT TTL (UART0 / Serial) ---
+#define BAUD_TTL             115200   // UART0 — SİT/SUT komut alma (Ek-7 Tablo 7 zorunlu)
+
+// --- SİT/SUT KOMUT PROTOKOLÜ ---
+// Format: [HEADER=0xAA][COMMAND:1B][CHECKSUM:1B][FOOTER1=0x0D][FOOTER2=0x0A]
+// Checksum iki konvansiyon da kabul: (a) 0xAA+cmd  (b) cmd+0x6C (Ek-7 Tablo 1)
+#define SITSUT_HEADER        0xAA
+#define SITSUT_DATA_HEADER   0xAB
+#define SITSUT_FOOTER1       0x0D
+#define SITSUT_FOOTER2       0x0A
+#define SITSUT_PAKET_BOYUT   5
+#define SITSUT_DATA_BOYUT    36
+
+#define CMD_SIT_BASLAT       0x20  // Sensör İzleme Testi Başlat
+#define CMD_SUT_BASLAT       0x22  // Sentetik Uçuş Testi Başlat
+#define CMD_DURDUR           0x24  // Testi Durdur
+
+#define CHK_SIT_T1           0x8C  // 0x20 + 0x6C
+#define CHK_SUT_T1           0x8E  // 0x22 + 0x6C
+#define CHK_DURDUR_T1        0x90  // 0x24 + 0x6C
+#define KOMUT_CHK_OFFSET     0x6C  // Tablo 1 checksum ofseti (Command + 0x6C)
+
+// --- ORTAK ZAMANLAMA (Ek-7) ---
+#define TEST_AKTIVASYON_GECIKME_MS  1000  // Komut onayindan sonra modun aktif olma gecikmesi
+#define SITSUT_GONDERIM_PERIYOT_MS   100  // SİT telemetri + SUT durum paketi periyodu = 10 Hz
+#define SITSUT_FRAME_TIMEOUT_MS      100  // Yarim kalan cerceve icin parser sifirlama suresi
+
+// --- SUT DURUM BİLGİLENDİRME PAKETİ (Tablo 5 & 6) ---
+#define SITSUT_DURUM_BOYUT   6
+#define ST_BIT_KALKIS        (1u << 0)
+#define ST_BIT_MOTOR_YANMA   (1u << 1)
+#define ST_BIT_MIN_IRTIFA    (1u << 2)
+#define ST_BIT_ACI_ESIK      (1u << 3)
+#define ST_BIT_ALCALMA       (1u << 4)
+#define ST_BIT_DROGUE_EMIR   (1u << 5)
+#define ST_BIT_ANA_IRTIFA    (1u << 6)
+#define ST_BIT_ANA_EMIR      (1u << 7)
+
+#define DURUM_MIN_IRTIFA_ESIGI  100.0  // m      - Bit 2 esigi
+#define DURUM_ACI_ESIGI          45.0  // derece - Bit 3 esigi
+#define MOTOR_YANMA_SURE_MS      3000  // ms     - Bit 1: kalkistan sonra motor yanma onlem suresi
+
+// --- SUT TEZGAH TESTI: FÜNYE YERINE LED (GÜVENLİK) ---
+// 1 = SUT modunda gercek fünye pinini SÜRME, sadece gosterge LED yak (tezgah — GÜVENLİ)
+// 0 = SUT'ta gercek fünyeyi de atesle (Aksaray GERÇEK test cihazi olcumu icin)
+//   NOT: SİT ve gercek ucusta bu bayraktan bagimsiz olarak fünye normal calisir.
+#define SUT_FUNYE_YERINE_LED   1
+#define PIN_LED_DROGUE   PIN_LED_1   // GPIO26 — 1. ayrilma (drogue) gostergesi
+#define PIN_LED_ANA      PIN_LED_2   // GPIO4  — 2. ayrilma (ana parasut) gostergesi
+
 // Sensör Sabitleri
 #define BNO055_DEF 55
 #define BNO055_ADDR 0x28
@@ -179,10 +229,21 @@ enum UcusDurumu {
 };
 UcusDurumu durum = HAZIR;
 
+// SİT/SUT Mod Durum Makinesi (Task2 tarafindan yonetilir)
+enum SitSutModu {
+    MOD_BEKLEME   = 0, // Komut bekleniyor, test aktif degil
+    MOD_SIT       = 1, // Sensör İzleme Testi aktif
+    MOD_SUT       = 2  // Sentetik Uçuş Testi aktif
+};
+volatile SitSutModu sitSutMod = MOD_BEKLEME;
+
 //Uçuş Algoritması İçin Gerekli Değişkenler
 bool ayrilma1 = false;
 bool ayrilma2 = false;
 float max_irtifa_degeri = 0.0;
+unsigned long kalkis_zaman = 0;          // Kalkis aninin millis() degeri (durum biti 1 icin)
+volatile uint16_t durum_bitleri = 0;     // SUT durum bilgilendirme bitleri (Tablo 5, latch)
+
 // --- FÜNYE ZAMANLAMA (Non-Blocking) ---
 #define FUNYE_SURE_MS 400  // Fünyeye enerji verilecek süre (ms)
 unsigned long funye1_baslangic = 0;  // 0 = aktif değil
@@ -251,6 +312,7 @@ float roll = 0.0, pitch = 0.0, yaw = 0.0;
 
 // Barometre (BME280) Verileri
 float irtifa = 0.0; // basinc/bmeSicaklik/nem kullanilmadigi icin kaldirildi
+float basinc = 0.0; // Yalniz SİT modunda okunur (Tablo 3 SİT paketi icin)
 
 // GPS Verileri
 float gpsEnlem = 0.0, gpsBoylam = 0.0;
@@ -272,6 +334,26 @@ struct TelemetryPacket {
     uint8_t ucus_durumu; // Uçuş evresi: 0=Hazır, 1=Yükseliyor, 2=İniş1, 3=İniş2, 4=İndi
 };
 #pragma pack(pop)
+
+// --- SİT TELEMETRİ PAKETİ (Tablo 3 — 36 byte) ---
+// [0xAB][İRTİFA:4B][BASINÇ:4B][İVME_X/Y/Z:4B×3][AÇI_X/Y/Z:4B×3][CHK:1B][0x0D][0x0A]
+#pragma pack(push, 1)
+struct SitPaketi {
+    uint8_t header;     // 0xAB
+    float   irtifa;
+    float   basinc;
+    float   ivmeX;
+    float   ivmeY;
+    float   ivmeZ;
+    float   aciX;       // Roll
+    float   aciY;       // Pitch
+    float   aciZ;       // Yaw
+    uint8_t checksum;
+    uint8_t footer1;    // 0x0D
+    uint8_t footer2;    // 0x0A
+};
+#pragma pack(pop)
+// sizeof(SitPaketi) = 36 byte
 
 // DMA uyumlu telemetri paketi pointer'ı
 TelemetryPacket* dma_packet; 
