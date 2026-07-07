@@ -618,25 +618,25 @@ void Task1code(void *pvParameters) {
   static SitSutModu onceki_mod = MOD_BEKLEME;
 
   for (;;) {
-    // 0. MOD GEÇİŞ KONTROLÜ — yeni SUT baslayinca ucus algoritmasini sifirla
+    // 0. MOD GEÇİŞ KONTROLÜ — HER mod gecisinde temiz baslangic.
+    //    Ozellikle SUT'tan cikista (DURDUR/SIT): sentetik ucus state'i
+    //    gercek funyeyi tetiklemesin (GÜVENLİK).
     SitSutModu simdiki_mod = sitSutMod;
     if (simdiki_mod != onceki_mod) {
-        if (simdiki_mod == MOD_SUT) {
-            durum             = HAZIR;
-            ayrilma1          = false;
-            ayrilma2          = false;
-            max_irtifa_degeri = 0.0;
-            durum_bitleri     = 0;
-            kalkis_zaman      = 0;
-            onceki_zaman      = 0;      // dikey hiz hesaplayici yeniden baslasin
-            anlik_dikey_hiz   = 0.0;
-            funye1_aktif = false;
-            funye2_aktif = false;
-            digitalWrite(PIN_FUNYE_1, LOW);
-            digitalWrite(PIN_FUNYE_2, LOW);
-            digitalWrite(PIN_LED_DROGUE, LOW);
-            digitalWrite(PIN_LED_ANA, LOW);
-        }
+        durum             = HAZIR;
+        ayrilma1          = false;
+        ayrilma2          = false;
+        max_irtifa_degeri = 0.0;
+        durum_bitleri     = 0;
+        kalkis_zaman      = 0;
+        onceki_zaman      = 0;
+        anlik_dikey_hiz   = 0.0;
+        funye1_aktif = false;
+        funye2_aktif = false;
+        digitalWrite(PIN_FUNYE_1, LOW);
+        digitalWrite(PIN_FUNYE_2, LOW);
+        digitalWrite(PIN_LED_DROGUE, LOW);
+        digitalWrite(PIN_LED_ANA, LOW);
         onceki_mod = simdiki_mod;
     }
 
@@ -687,7 +687,6 @@ void Task1code(void *pvParameters) {
 
     // Anlık dikey hızı (Vz) hesapla
     anlik_dikey_hiz = hesapla_dikey_hiz(irtifa);
-
 
     // --- FÜNYE ZAMANLAMA KONTROLÜ (Non-Blocking) ---
     funye_guncelle();
@@ -858,14 +857,18 @@ void Task2code(void *pvParameters) {
                   (chk == chk_hdr_cmd || chk == chk_tablo1)) {
                   switch (cmd) {
                       case CMD_SIT_BASLAT:
-                          bekleyen_mod        = MOD_SIT;
-                          aktivasyon_bekliyor = true;
-                          aktivasyon_zamani   = millis() + TEST_AKTIVASYON_GECIKME_MS;
+                          if (durum < YUKSELIYOR) {           // ucus basladiysa test komutunu yoksay (GÜVENLİK)
+                              bekleyen_mod        = MOD_SIT;
+                              aktivasyon_bekliyor = true;
+                              aktivasyon_zamani   = millis() + TEST_AKTIVASYON_GECIKME_MS;
+                          }
                           break;
                       case CMD_SUT_BASLAT:
-                          bekleyen_mod        = MOD_SUT;
-                          aktivasyon_bekliyor = true;
-                          aktivasyon_zamani   = millis() + TEST_AKTIVASYON_GECIKME_MS;
+                          if (durum < YUKSELIYOR) {
+                              bekleyen_mod        = MOD_SUT;
+                              aktivasyon_bekliyor = true;
+                              aktivasyon_zamani   = millis() + TEST_AKTIVASYON_GECIKME_MS;
+                          }
                           break;
                       case CMD_DURDUR:
                           aktivasyon_bekliyor = false;
@@ -881,15 +884,18 @@ void Task2code(void *pvParameters) {
                   for (int i = 1; i <= 32; i++) chk_payload += ttl_buf[i];
                   uint8_t chk_header = chk_payload + ttl_buf[0];
                   if (ttl_buf[33] == chk_header || ttl_buf[33] == chk_payload) {
-                      // Gelen FLOAT32'ler BIG ENDIAN (Ek-7)
-                      irtifa = be32_to_float(&ttl_buf[1]);
-                      basinc = be32_to_float(&ttl_buf[5]);
-                      ivmeX  = be32_to_float(&ttl_buf[9]);
-                      ivmeY  = be32_to_float(&ttl_buf[13]);
-                      ivmeZ  = be32_to_float(&ttl_buf[17]);
-                      roll   = be32_to_float(&ttl_buf[21]);
-                      pitch  = be32_to_float(&ttl_buf[25]);
-                      yaw    = be32_to_float(&ttl_buf[29]);
+                      // SUT VERİSİ yalnizca SUT modunda globallere enjekte edilir (GÜVENLİK)
+                      if (sitSutMod == MOD_SUT) {
+                          // Gelen FLOAT32'ler BIG ENDIAN (Ek-7)
+                          irtifa = be32_to_float(&ttl_buf[1]);
+                          basinc = be32_to_float(&ttl_buf[5]);
+                          ivmeX  = be32_to_float(&ttl_buf[9]);
+                          ivmeY  = be32_to_float(&ttl_buf[13]);
+                          ivmeZ  = be32_to_float(&ttl_buf[17]);
+                          roll   = be32_to_float(&ttl_buf[21]);
+                          pitch  = be32_to_float(&ttl_buf[25]);
+                          yaw    = be32_to_float(&ttl_buf[29]);
+                      }
                   }
               }
           }
@@ -937,8 +943,8 @@ void Task2code(void *pvParameters) {
             lora_sayac = 0;
         }
     }
-    // portMAX_DELAY ile Queue'da beklediğimiz için vTaskDelay gerekmez.
-    // CPU xQueueReceive içinde güvenle uyur, Watchdog tetiklenmez.
+    // pdMS_TO_TICKS(10) ile en fazla 10ms bekleriz; bu sure hem TTL'i (Task2 basinda okunuyor)
+    // sik sik yoklamamizi saglar hem de Watchdog'u tetiklemeyecek kadar kisadir.
   }
 }
 
