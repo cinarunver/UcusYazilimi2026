@@ -21,7 +21,7 @@
 #define FUNYE_GERCEK_ATES   1     // 0 = SİMÜLE (pin sürülmez, güvenli) | 1 = GERÇEK ateşleme
 
 // ── Pinler (ana uçuş yazılımıyla aynı) ──────────────────────────────────────
-#define PIN_FUNYE   27            // Fünye / MOSFET çıkışı (main.cpp PIN_FUNYE_1)
+#define PIN_FUNYE   13            // Fünye / MOSFET çıkışı (main.cpp PIN_FUNYE_1)
 #define PIN_LED     25            // LED çıkışı           (main.cpp PIN_LED)
 
 // ── Zamanlama sabitleri ─────────────────────────────────────────────────────
@@ -29,8 +29,8 @@
 #define LED_GECIKME_MS         10000UL    // Güç → LED arası bekleme
 #define FUNYE_GECIKME_MS       10000UL    // LED → fünye arası bekleme
 #define FUNYE_PALS_SAYISI          5      // Kaç kez ateşleme palsı
-#define FUNYE_ACIK_MS           1000UL    // Her palsta pin HIGH kalma süresi
-#define FUNYE_KAPALI_MS         1000UL    // Palslar arası pin LOW süresi
+#define FUNYE_ACIK_MS           5000UL    // Her palsta pin HIGH kalma süresi
+#define FUNYE_KAPALI_MS         5000UL    // Palslar arası pin LOW süresi
 
 // ── Durum makinesi ──────────────────────────────────────────────────────────
 enum Durum {

@@ -38,6 +38,28 @@
 #define DBG_PRINT_MS        100   // Periyodik tam durum dokumu araligi (ms) ~10 Hz
 #define FUNYE_GERCEK_ATES   0     // 0 = SIMULE (pin surulmez, guvenli) | 1 = GERCEK atesleme
 
+// --- USB SERIAL CIKIS MODU ---
+// 0 = NORMAL DEBUG: USB Serial'e insan-okunur tam durum dokumu + GPS ham + setup loglari.
+// 1 = TEMIZ BINARY: USB Serial'e SADECE framed binary cerceve (AA 55 LEN payload CRC16,
+//     ~10 Hz) basilir; TUM metin (dump, GPS ham, funye/durum mesajlari, i2c/pin/setup
+//     loglari) susturulur. Yer istasyonu parser'ini USB kablosundan dogrudan besleyip
+//     test etmek icin. LoRa (UART1) tarafi bu bayraktan BAGIMSIZ, kendi moduyla calisir.
+#define SERIAL_FRAMED_OUTPUT 0
+
+// Insan-okunur metin makrolari: SERIAL_FRAMED_OUTPUT=1 iken hicbir metin USB'ye yazilmaz.
+// (Framed binary cerceve dogrudan Serial.write ile basilir, bu makrolardan bagimsiz.)
+#if SERIAL_FRAMED_OUTPUT
+  #define DBGF(...)   ((void)0)
+  #define DBGLN(x)    ((void)0)
+  #define DBGPR(x)    ((void)0)
+  #define DBGWR(x)    ((void)0)
+#else
+  #define DBGF(...)   Serial.printf(__VA_ARGS__)
+  #define DBGLN(x)    Serial.println(x)
+  #define DBGPR(x)    Serial.print(x)
+  #define DBGWR(x)    Serial.write(x)
+#endif
+
 // ============================================================
 //  >>> YARISMA ALANI - LORA ADRES & KANAL AYARLARI <<<
 // ============================================================
