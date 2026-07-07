@@ -819,9 +819,98 @@ void Task2code(void *pvParameters) {
   TelemetryPacket incomingPacket;
   uint32_t lora_sayac = 0; // LoRa hız sınırlayıcı sayacı
 
+  // TTL komut/veri okuma buffer'i (UART0)
+  uint8_t ttl_buf[SITSUT_DATA_BOYUT]; // Max 36 byte
+  uint8_t ttl_idx = 0;
+  uint8_t beklenen_boyut = SITSUT_PAKET_BOYUT;
+  unsigned long son_ttl_byte_zamani = 0;
+
+  // 1 sn gecikmeli aktivasyon
+  SitSutModu    bekleyen_mod        = MOD_BEKLEME;
+  bool          aktivasyon_bekliyor = false;
+  unsigned long aktivasyon_zamani   = 0;
+
   for (;;) {
+    // ─── 1. TTL OKUMA (Komutlar + SUT Verisi) — UART0/Serial ───────
+    while (Serial.available() > 0) {
+      uint8_t b = Serial.read();
+      son_ttl_byte_zamani = millis();
+
+      if (ttl_idx == 0) {
+        if (b == SITSUT_HEADER) {
+            beklenen_boyut = SITSUT_PAKET_BOYUT; // 5
+            ttl_buf[ttl_idx++] = b;
+        } else if (b == SITSUT_DATA_HEADER) {
+            beklenen_boyut = SITSUT_DATA_BOYUT;  // 36
+            ttl_buf[ttl_idx++] = b;
+        }
+      } else {
+        ttl_buf[ttl_idx++] = b;
+
+        if (ttl_idx >= beklenen_boyut) {
+          // KOMUT (5B)
+          if (beklenen_boyut == SITSUT_PAKET_BOYUT) {
+              uint8_t cmd = ttl_buf[1];
+              uint8_t chk = ttl_buf[2];
+              uint8_t chk_hdr_cmd = (uint8_t)(SITSUT_HEADER + cmd);    // (a)
+              uint8_t chk_tablo1  = (uint8_t)(cmd + KOMUT_CHK_OFFSET); // (b)
+              if (ttl_buf[3] == SITSUT_FOOTER1 && ttl_buf[4] == SITSUT_FOOTER2 &&
+                  (chk == chk_hdr_cmd || chk == chk_tablo1)) {
+                  switch (cmd) {
+                      case CMD_SIT_BASLAT:
+                          bekleyen_mod        = MOD_SIT;
+                          aktivasyon_bekliyor = true;
+                          aktivasyon_zamani   = millis() + TEST_AKTIVASYON_GECIKME_MS;
+                          break;
+                      case CMD_SUT_BASLAT:
+                          bekleyen_mod        = MOD_SUT;
+                          aktivasyon_bekliyor = true;
+                          aktivasyon_zamani   = millis() + TEST_AKTIVASYON_GECIKME_MS;
+                          break;
+                      case CMD_DURDUR:
+                          aktivasyon_bekliyor = false;
+                          sitSutMod           = MOD_BEKLEME;
+                          break;
+                  }
+              }
+          }
+          // SUT VERİSİ (36B)
+          else if (beklenen_boyut == SITSUT_DATA_BOYUT) {
+              if (ttl_buf[34] == SITSUT_FOOTER1 && ttl_buf[35] == SITSUT_FOOTER2) {
+                  uint8_t chk_payload = 0;
+                  for (int i = 1; i <= 32; i++) chk_payload += ttl_buf[i];
+                  uint8_t chk_header = chk_payload + ttl_buf[0];
+                  if (ttl_buf[33] == chk_header || ttl_buf[33] == chk_payload) {
+                      // Gelen FLOAT32'ler BIG ENDIAN (Ek-7)
+                      irtifa = be32_to_float(&ttl_buf[1]);
+                      basinc = be32_to_float(&ttl_buf[5]);
+                      ivmeX  = be32_to_float(&ttl_buf[9]);
+                      ivmeY  = be32_to_float(&ttl_buf[13]);
+                      ivmeZ  = be32_to_float(&ttl_buf[17]);
+                      roll   = be32_to_float(&ttl_buf[21]);
+                      pitch  = be32_to_float(&ttl_buf[25]);
+                      yaw    = be32_to_float(&ttl_buf[29]);
+                  }
+              }
+          }
+          ttl_idx = 0;
+        }
+      }
+    }
+
+    // ─── 1b. FRAME TIMEOUT (100 ms) — yarim cerceveyi sifirla ──
+    if (ttl_idx > 0 && (millis() - son_ttl_byte_zamani) > SITSUT_FRAME_TIMEOUT_MS) {
+        ttl_idx = 0;
+    }
+
+    // ─── 1c. GECİKMELİ AKTİVASYON — onaydan 1 sn sonra modu etkinlestir ──
+    if (aktivasyon_bekliyor && (long)(millis() - aktivasyon_zamani) >= 0) {
+        sitSutMod           = bekleyen_mod;
+        aktivasyon_bekliyor = false;
+    }
+
     // Queue'dan paket al (CPU'yu yormadan veri gelene kadar bekler)
-    if (xQueueReceive(telemetryQueue, &incomingPacket, portMAX_DELAY) == pdTRUE) {
+    if (xQueueReceive(telemetryQueue, &incomingPacket, pdMS_TO_TICKS(10)) == pdTRUE) {
 
         // 1. SD Kart — Ping-Pong Buffer ile Logla (~100 Hz)
         if (sdOk && logFile) {
