@@ -614,32 +614,68 @@ void lora_log(const char* msg) {
 
 // Core 0'da çalışacak olan görevin fonsiyonu
 void Task1code(void *pvParameters) {
- 
+
+  static SitSutModu onceki_mod = MOD_BEKLEME;
 
   for (;;) {
-    // ----------------------------------------------------
-    // KENDI KODUNUZU BURAYA YAZIN (CORE 0 - SÜREKLİ DÖNGÜ)
-    // ----------------------------------------------------
+    // 0. MOD GEÇİŞ KONTROLÜ — yeni SUT baslayinca ucus algoritmasini sifirla
+    SitSutModu simdiki_mod = sitSutMod;
+    if (simdiki_mod != onceki_mod) {
+        if (simdiki_mod == MOD_SUT) {
+            durum             = HAZIR;
+            ayrilma1          = false;
+            ayrilma2          = false;
+            max_irtifa_degeri = 0.0;
+            durum_bitleri     = 0;
+            kalkis_zaman      = 0;
+            onceki_zaman      = 0;      // dikey hiz hesaplayici yeniden baslasin
+            anlik_dikey_hiz   = 0.0;
+            funye1_aktif = false;
+            funye2_aktif = false;
+            digitalWrite(PIN_FUNYE_1, LOW);
+            digitalWrite(PIN_FUNYE_2, LOW);
+            digitalWrite(PIN_LED_DROGUE, LOW);
+            digitalWrite(PIN_LED_ANA, LOW);
+        }
+        onceki_mod = simdiki_mod;
+    }
 
-    // 1. IMU (BNO055) Verilerini Okuma
-    sensors_event_t a, g, o;
-    // İvme (Linear Acceleration - Yerçekimi hariç)
-    bno.getEvent(&a, Adafruit_BNO055::VECTOR_LINEARACCEL);
-    ivmeX = kf_ivmeX.updateEstimate(a.acceleration.x);
-    ivmeY = kf_ivmeY.updateEstimate(a.acceleration.y);
-    ivmeZ = kf_ivmeZ.updateEstimate(a.acceleration.z);
+    // 1. Sensör okuma — SUT modunda degilsek donanimdan oku
+    if (sitSutMod != MOD_SUT) {
+        // IMU (BNO055)
+        sensors_event_t a, g, o;
+        bno.getEvent(&a, Adafruit_BNO055::VECTOR_LINEARACCEL);
+        ivmeX = kf_ivmeX.updateEstimate(a.acceleration.x);
+        ivmeY = kf_ivmeY.updateEstimate(a.acceleration.y);
+        ivmeZ = kf_ivmeZ.updateEstimate(a.acceleration.z);
 
-    // Jiroskop
-    bno.getEvent(&g, Adafruit_BNO055::VECTOR_GYROSCOPE);
-    gyroX = kf_gyroX.updateEstimate(g.gyro.x);
-    gyroY = kf_gyroY.updateEstimate(g.gyro.y);
-    gyroZ = kf_gyroZ.updateEstimate(g.gyro.z);
+        bno.getEvent(&g, Adafruit_BNO055::VECTOR_GYROSCOPE);
+        gyroX = kf_gyroX.updateEstimate(g.gyro.x);
+        gyroY = kf_gyroY.updateEstimate(g.gyro.y);
+        gyroZ = kf_gyroZ.updateEstimate(g.gyro.z);
 
-    // Euler Açıları (Yönelim)
-    bno.getEvent(&o, Adafruit_BNO055::VECTOR_EULER);
-    yaw = kf_yaw.updateEstimate(o.orientation.x);
-    roll = kf_roll.updateEstimate(o.orientation.y);
-    pitch = kf_pitch.updateEstimate(o.orientation.z);
+        bno.getEvent(&o, Adafruit_BNO055::VECTOR_EULER);
+        yaw   = kf_yaw.updateEstimate(o.orientation.x);
+        roll  = kf_roll.updateEstimate(o.orientation.y);
+        pitch = kf_pitch.updateEstimate(o.orientation.z);
+
+        // 2. Barometre (BME280) — irtifa her zaman; basinc YALNIZ SİT modunda (Tablo 3)
+        irtifa = kf_irtifa.updateEstimate(bme.readAltitude(referans_basinc));
+        if (sitSutMod == MOD_SIT) {
+            basinc = bme.readPressure(); // Pascal
+        }
+
+        // 3. GPS
+        while (Serial2.available() > 0) {
+            gps.encode(Serial2.read());
+        }
+        if (gps.location.isUpdated()) {
+            gpsEnlem = gps.location.lat();
+            gpsBoylam = gps.location.lng();
+        }
+    }
+    // MOD_SUT: donanim atlandi; irtifa/basinc/ivme/aci degerleri Task2 tarafindan
+    // TTL'den enjekte ediliyor.
 
     // Roketin yere göre eğim açısını (Tilt Angle) hesapla (0 = Tam dik)
     float p_rad = pitch * DEG_TO_RAD;
@@ -649,26 +685,8 @@ void Task1code(void *pvParameters) {
     cos_val = constrain(cos_val, -1.0f, 1.0f);
     eglim_acisi = acos(cos_val) * RAD_TO_DEG;
 
-    // 2. Barometre (BME280) — SADECE irtifa okunur.
-    // basinc/sicaklik/nem pakette de algoritmada da kullanilmiyor; her dongude
-    // bosuna I2C okumasi yapmamak icin okunmuyorlar (100 Hz'de 3 okuma tasarrufu).
-    // referans_basinc: setup() içinde BME280'den otomatik kalibre edildi
-    irtifa = kf_irtifa.updateEstimate(bme.readAltitude(referans_basinc));
-
     // Anlık dikey hızı (Vz) hesapla
     anlik_dikey_hiz = hesapla_dikey_hiz(irtifa);
-
-    // 3. GPS Verilerini Okuma
-    // Serial2 üzerinden gelen verileri TinyGPS++ nesnesine besliyoruz
-    while (Serial2.available() > 0) {
-        gps.encode(Serial2.read());
-    }
-    
-    // GPS konumu güncellendiyse değişkenlere alıyoruz
-    if (gps.location.isUpdated()) {
-        gpsEnlem = gps.location.lat();
-        gpsBoylam = gps.location.lng();
-    }
 
 
     // --- FÜNYE ZAMANLAMA KONTROLÜ (Non-Blocking) ---
@@ -681,6 +699,7 @@ void Task1code(void *pvParameters) {
             // [ TODO ] BNO055 Z-ekseni yönü doğrulanmalı!
             if (ivmeZ > KALKIS_IVME_ESIGI) {
                 durum = YUKSELIYOR;
+                kalkis_zaman = millis(); // Motor yanma onlem suresi (durum biti 1) icin referans
             }
             break;
 
@@ -736,6 +755,29 @@ void Task1code(void *pvParameters) {
         case INDI:
             // Sistem pasif, hiçbir aksiyon alınmaz
             break;
+    }
+
+    // --- SUT DURUM BİTLERİ (Tablo 5, latch) ---
+    if (durum >= YUKSELIYOR)                            durum_bitleri |= ST_BIT_KALKIS;
+    if ((durum_bitleri & ST_BIT_KALKIS) &&
+        (millis() - kalkis_zaman >= MOTOR_YANMA_SURE_MS)) durum_bitleri |= ST_BIT_MOTOR_YANMA;
+    if (irtifa > DURUM_MIN_IRTIFA_ESIGI)               durum_bitleri |= ST_BIT_MIN_IRTIFA;
+    if (eglim_acisi > DURUM_ACI_ESIGI)                 durum_bitleri |= ST_BIT_ACI_ESIK;
+    if (durum >= INIS_1)                               durum_bitleri |= ST_BIT_ALCALMA;
+    if (ayrilma1)                                      durum_bitleri |= ST_BIT_DROGUE_EMIR;
+    if ((durum >= INIS_1) && (irtifa < AYRILMA2_MESAFE)) durum_bitleri |= ST_BIT_ANA_IRTIFA;
+    if (ayrilma2)                                      durum_bitleri |= ST_BIT_ANA_EMIR;
+
+    // --- 10 Hz TTL GÖNDERİM (Ek-7 s.7) ---
+    //   MOD_SIT → Tablo 3 SİT telemetri (36B) ; MOD_SUT → Tablo 6 durum (6B)
+    static unsigned long son_ttl_gonderim = 0;
+    if (millis() - son_ttl_gonderim >= SITSUT_GONDERIM_PERIYOT_MS) {
+        son_ttl_gonderim = millis();
+        if (sitSutMod == MOD_SIT) {
+            gonder_sit_paketi();
+        } else if (sitSutMod == MOD_SUT) {
+            gonder_durum_paketi();
+        }
     }
 
     // --- STRUCT DOLDURMA VE CORE 1'E GÖNDERME ---
