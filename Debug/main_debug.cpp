@@ -44,7 +44,7 @@
 //     ~10 Hz) basilir; TUM metin (dump, GPS ham, funye/durum mesajlari, i2c/pin/setup
 //     loglari) susturulur. Yer istasyonu parser'ini USB kablosundan dogrudan besleyip
 //     test etmek icin. LoRa (UART1) tarafi bu bayraktan BAGIMSIZ, kendi moduyla calisir.
-#define SERIAL_FRAMED_OUTPUT 0
+#define SERIAL_FRAMED_OUTPUT 1
 
 // Insan-okunur metin makrolari: SERIAL_FRAMED_OUTPUT=1 iken hicbir metin USB'ye yazilmaz.
 // (Framed binary cerceve dogrudan Serial.write ile basilir, bu makrolardan bagimsiz.)
@@ -347,7 +347,7 @@ void Funye1Atesle(){
         funye1_baslangic = millis();
         funye1_aktif = true;
         ayrilma1 = true;
-        Serial.printf("\n!!!!! FUNYE1 ATESLENDI %s  (t=%lu ms) apogee: A=%d B=%d D=%d  max=%.1f irtifa=%.1f\n\n",
+        DBGF("\n!!!!! FUNYE1 ATESLENDI %s  (t=%lu ms) apogee: A=%d B=%d D=%d  max=%.1f irtifa=%.1f\n\n",
                       FUNYE_GERCEK_ATES ? "[GERCEK]" : "[SIMULE]",
                       funye1_baslangic, dbg.apo_A, dbg.apo_B, dbg.apo_D,
                       max_irtifa_degeri, irtifa);
@@ -362,7 +362,7 @@ void Funye2Atesle(){
         funye2_baslangic = millis();
         funye2_aktif = true;
         ayrilma2 = true;
-        Serial.printf("\n!!!!! FUNYE2 ATESLENDI %s  (t=%lu ms) irtifa=%.1f\n\n",
+        DBGF("\n!!!!! FUNYE2 ATESLENDI %s  (t=%lu ms) irtifa=%.1f\n\n",
                       FUNYE_GERCEK_ATES ? "[GERCEK]" : "[SIMULE]",
                       funye2_baslangic, irtifa);
     }
@@ -449,30 +449,43 @@ void sd_buffer_bosalt(File& file) {
     if (file) file.flush();
 }
 
-// --- ÇERÇEVELI PAKET GÖNDERME (DMA DESTEKLI UART) ---
-// DEBUG: cerceve global son_frame'e de yazilir ki Task2 hex'ini basabilsin.
-void gonder_paket_framed_dma(uart_port_t uart_num, const TelemetryPacket& pkt) {
-    static uint8_t frame_buf[80];
-
+// --- ÇERÇEVE KUR (AA 55 LEN payload CRC16) — tek yer, hem UART hem Serial kullanir ---
+// out[] en az sizeof(TelemetryPacket)+5 (=64) byte olmali. Kurulan cerceve uzunlugunu doner.
+// Ayrica DEBUG global son_frame/son_frame_len/son_crc guncellenir (hex dokumu icin).
+size_t build_framed(const TelemetryPacket& pkt, uint8_t* out) {
     const uint8_t* payload = (const uint8_t*)&pkt;
     const size_t   len     = sizeof(TelemetryPacket);
     uint16_t       crc     = crc16_ccitt(payload, len);
 
     size_t idx = 0;
-    frame_buf[idx++] = SYNC_BYTE_1;
-    frame_buf[idx++] = SYNC_BYTE_2;
-    frame_buf[idx++] = (uint8_t)len;
-    memcpy(&frame_buf[idx], payload, len);
+    out[idx++] = SYNC_BYTE_1;
+    out[idx++] = SYNC_BYTE_2;
+    out[idx++] = (uint8_t)len;
+    memcpy(&out[idx], payload, len);
     idx += len;
-    frame_buf[idx++] = (uint8_t)(crc >> 8);
-    frame_buf[idx++] = (uint8_t)(crc & 0xFF);
+    out[idx++] = (uint8_t)(crc >> 8);
+    out[idx++] = (uint8_t)(crc & 0xFF);
 
-    uart_write_bytes(uart_num, (const char*)frame_buf, idx);
-
-    // DEBUG: son gonderilen cerceveyi sakla
-    memcpy(son_frame, frame_buf, idx);
+    // DEBUG: son kurulan cerceveyi sakla
+    memcpy(son_frame, out, idx);
     son_frame_len = idx;
     son_crc = crc;
+    return idx;
+}
+
+// --- ÇERÇEVELI PAKET GÖNDERME (DMA DESTEKLI UART / LoRa) ---
+void gonder_paket_framed_dma(uart_port_t uart_num, const TelemetryPacket& pkt) {
+    static uint8_t frame_buf[80];
+    size_t idx = build_framed(pkt, frame_buf);
+    uart_write_bytes(uart_num, (const char*)frame_buf, idx);
+}
+
+// --- ÇERÇEVELI PAKET GÖNDERME (USB SERIAL / UART0) ---
+// SERIAL_FRAMED_OUTPUT modunda cagrilir: ayni binary cerceveyi USB Serial'e basar.
+void gonder_paket_framed_serial(const TelemetryPacket& pkt) {
+    static uint8_t frame_buf[80];
+    size_t idx = build_framed(pkt, frame_buf);
+    Serial.write(frame_buf, idx);
 }
 
 // --- CSV METIN PAKET GÖNDERME (STRING modu) ---
@@ -535,9 +548,9 @@ void lora_konfigurasyon() {
     vTaskDelay(50 / portTICK_PERIOD_MS);
 
     // DEBUG: gonderilen config paketini USB'ye de bas
-    Serial.printf("  LoRa config paketi (6B): C0 %02X %02X %02X %02X %02X\n",
+    DBGF("  LoRa config paketi (6B): C0 %02X %02X %02X %02X %02X\n",
                   LORA_ADDH, LORA_ADDL, LORA_SPED, LORA_CHAN, LORA_OPTION);
-    Serial.printf("  -> ADDH=0x%02X ADDL=0x%02X SPED=0x%02X CHAN=0x%02X (frekans=%d MHz) OPTION=0x%02X\n",
+    DBGF("  -> ADDH=0x%02X ADDL=0x%02X SPED=0x%02X CHAN=0x%02X (frekans=%d MHz) OPTION=0x%02X\n",
                   LORA_ADDH, LORA_ADDL, LORA_SPED, LORA_CHAN, 410 + LORA_CHAN, LORA_OPTION);
 }
 
@@ -546,8 +559,8 @@ void lora_konfigurasyon() {
 void lora_log(const char* msg) {
     uart_write_bytes(UART_NUM_1, msg, strlen(msg));
     uart_write_bytes(UART_NUM_1, "\r\n", 2);
-    Serial.print("[LoRa-log] ");
-    Serial.println(msg);
+    DBGPR("[LoRa-log] ");
+    DBGLN(msg);
 }
 
 // ============================================================
@@ -556,6 +569,7 @@ void lora_log(const char* msg) {
 
 // I2C bus taramasi (0x01..0x7F). Bulunan adresleri etiketleriyle basar.
 void i2c_bus_tara() {
+#if !SERIAL_FRAMED_OUTPUT
     Serial.println("\n--- I2C BUS TARAMASI (SDA=21, SCL=22) ---");
     int bulunan = 0;
     for (uint8_t adr = 0x01; adr < 0x7F; adr++) {
@@ -575,10 +589,12 @@ void i2c_bus_tara() {
     else
         Serial.printf("  Toplam %d I2C cihazi bulundu.\n", bulunan);
     Serial.println("-----------------------------------------");
+#endif
 }
 
 // Pin haritasini basar
 void pin_haritasi_bas() {
+#if !SERIAL_FRAMED_OUTPUT
     Serial.println("\n--- PIN HARITASI ---");
     Serial.printf("  I2C   : SDA=%d SCL=%d\n", PIN_I2C_SDA, PIN_I2C_SCL);
     Serial.printf("  SPI/SD: CLK=%d MISO=%d MOSI=%d CS=%d  SD_DET=%d\n",
@@ -591,6 +607,7 @@ void pin_haritasi_bas() {
     Serial.printf("  LED   : LED=%d L1=%d L2=%d L3=%d  BUZZER=%d\n",
                   PIN_LED, PIN_LED_1, PIN_LED_2, PIN_LED_3, PIN_BUZZER);
     Serial.println("--------------------");
+#endif
 }
 
 // Core 0'da çalışacak olan görevin fonsiyonu
@@ -650,7 +667,7 @@ void Task1code(void *pvParameters) {
     // 3. GPS Verilerini Okuma
     while (Serial2.available() > 0) {
         char c = Serial2.read();
-#if GPS_HAM_VERI
+#if GPS_HAM_VERI && !SERIAL_FRAMED_OUTPUT
         Serial.write(c);   // GPS'ten gelen ham NMEA verisini oldugu gibi Serial'e yansit
 #endif
         gps.encode(c);
@@ -674,7 +691,7 @@ void Task1code(void *pvParameters) {
     dbg.gps_ay     = gps.date.month();
     dbg.gps_yil    = gps.date.year();
 
-#if GPS_HAM_VERI
+#if GPS_HAM_VERI && !SERIAL_FRAMED_OUTPUT
     // Okuma aninda parse edilmis GPS ozeti (throttle yok)
     if (gps.location.isUpdated()) {
         uint8_t saat_tr = (dbg.gps_saat + 3) % 24;   // UTC -> Turkiye (UTC+3)
@@ -697,7 +714,7 @@ void Task1code(void *pvParameters) {
         case HAZIR:
             if (ivmeZ > KALKIS_IVME_ESIGI) {
                 durum = YUKSELIYOR;
-                Serial.printf("\n>>> DURUM DEGISTI: HAZIR -> YUKSELIYOR (ivmeZ=%.2f > %.1f)\n\n",
+                DBGF("\n>>> DURUM DEGISTI: HAZIR -> YUKSELIYOR (ivmeZ=%.2f > %.1f)\n\n",
                               ivmeZ, KALKIS_IVME_ESIGI);
             }
             break;
@@ -726,7 +743,7 @@ void Task1code(void *pvParameters) {
         case INIS_2:
             if ((anlik_dikey_hiz > -INIS_HIZ_ESIGI) && (irtifa < INIS_IRTIFA_ESIGI)) {
                 durum = INDI;
-                Serial.println("\n>>> DURUM DEGISTI: INIS_2 -> INDI (yere inis)\n");
+                DBGLN("\n>>> DURUM DEGISTI: INIS_2 -> INDI (yere inis)\n");
             }
             break;
 
@@ -794,6 +811,16 @@ void Task2code(void *pvParameters) {
             gonder_paket_lora(UART_NUM_1, incomingPacket);
             lora_sayac = 0;
             tx_bu_dongu = true;
+        }
+#endif
+
+#if SERIAL_FRAMED_OUTPUT
+        // TEMIZ BINARY MOD: ayni framed cerceveyi USB Serial'e (~10 Hz) bas.
+        // LoRa modundan BAGIMSIZ ayri sayac (LoRa STRING modunda da calisir).
+        static uint32_t serial_frame_sayac = 0;
+        if (++serial_frame_sayac >= LORA_GONDERIM_ORANI) {
+            gonder_paket_framed_serial(incomingPacket);
+            serial_frame_sayac = 0;
         }
 #endif
 
@@ -899,7 +926,7 @@ void Task2code(void *pvParameters) {
             dbg_append("-- SISTEM --  free_heap:%u B\n", (unsigned)ESP.getFreeHeap());
 
             // === TEK SEFERDE BAS ===
-            Serial.print(dbg_buf);                        // Serial monitor: her zaman, tam hizda
+            DBGPR(dbg_buf);                               // Serial monitor: metin modda tam hizda (framed modda susar)
 #if LORA_GONDERIM_MODU == LORA_MODE_STRING
             if (lora_dump_bu_dongu) {                     // LoRa: ayni dokum, throttle'li
                 uart_write_bytes(UART_NUM_1, dbg_buf, dbg_off);
@@ -915,13 +942,13 @@ void setup() {
     // 0. USB SERI MONITOR (DEBUG)
     Serial.begin(115200);
     delay(400);
-    Serial.println("\n\n################################################################");
-    Serial.println("#  TRAKYA ROKET 2026 - UCUS YAZILIMI  [DEBUG / TESHIS FORK]     #");
-    Serial.println("################################################################");
-    Serial.printf("  Derleme: %s %s\n", __DATE__, __TIME__);
-    Serial.printf("  ESP-IDF: %s  |  CPU: %d MHz  |  free_heap: %u B\n",
+    DBGLN("\n\n################################################################");
+    DBGLN("#  TRAKYA ROKET 2026 - UCUS YAZILIMI  [DEBUG / TESHIS FORK]     #");
+    DBGLN("################################################################");
+    DBGF("  Derleme: %s %s\n", __DATE__, __TIME__);
+    DBGF("  ESP-IDF: %s  |  CPU: %d MHz  |  free_heap: %u B\n",
                   esp_get_idf_version(), getCpuFrequencyMhz(), (unsigned)ESP.getFreeHeap());
-    Serial.printf("  Ayarlar: DBG_PRINT_MS=%d (~%.0f Hz)  FUNYE_GERCEK_ATES=%d (%s)\n",
+    DBGF("  Ayarlar: DBG_PRINT_MS=%d (~%.0f Hz)  FUNYE_GERCEK_ATES=%d (%s)\n",
                   DBG_PRINT_MS, 1000.0/DBG_PRINT_MS, FUNYE_GERCEK_ATES,
                   FUNYE_GERCEK_ATES ? "GERCEK ATESLEME!" : "simule/guvenli");
 
@@ -948,7 +975,7 @@ void setup() {
     // 3. Protokoller ve DMA Bellek Tahsisi
     sd_dma_buf_A = (char*)heap_caps_malloc(SD_DMA_BUF_SIZE, MALLOC_CAP_DMA);
     sd_dma_buf_B = (char*)heap_caps_malloc(SD_DMA_BUF_SIZE, MALLOC_CAP_DMA);
-    Serial.printf("  DMA buffer tahsisi: A=%s B=%s\n",
+    DBGF("  DMA buffer tahsisi: A=%s B=%s\n",
                   sd_dma_buf_A ? "OK" : "BASARISIZ", sd_dma_buf_B ? "OK" : "BASARISIZ");
 
     Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL);
@@ -959,7 +986,7 @@ void setup() {
 
     // 4. Modül Haberleşmeleri
     Serial2.begin(BAUD_GPS, SERIAL_8N1, PIN_GPS_RX, PIN_GPS_TX);
-    Serial.println("\n[GPS] Serial2 (UART2) baslatildi @9600 - fix icin acik gokyuzu gerekir.");
+    DBGLN("\n[GPS] Serial2 (UART2) baslatildi @9600 - fix icin acik gokyuzu gerekir.");
 
     // LoRa (UART1) DMA Yapılandırması
     uart_config_t uart_config = {
@@ -972,7 +999,7 @@ void setup() {
     uart_driver_install(UART_NUM_1, 2048, 2048, 0, NULL, 0);
     uart_param_config(UART_NUM_1, &uart_config);
     uart_set_pin(UART_NUM_1, PIN_LORA_TX, PIN_LORA_RX, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
-    Serial.println("\n[LoRa] UART1 IDF surucusu kuruldu. Konfigurasyon gonderiliyor...");
+    DBGLN("\n[LoRa] UART1 IDF surucusu kuruldu. Konfigurasyon gonderiliyor...");
     lora_konfigurasyon();
 
     delay(500);
@@ -980,14 +1007,14 @@ void setup() {
     uart_write_bytes(UART_NUM_1, start_msg, strlen(start_msg));
 
     // SD Kart Başlatma
-    Serial.println("\n[SD] Baslatiliyor...");
-    Serial.printf("  SD_DET pini (%d) durumu: %s\n", PIN_SDKART_DET,
+    DBGLN("\n[SD] Baslatiliyor...");
+    DBGF("  SD_DET pini (%d) durumu: %s\n", PIN_SDKART_DET,
                   digitalRead(PIN_SDKART_DET) ? "HIGH (kart yok olabilir)" : "LOW (kart var)");
     if (!SD.begin(PIN_SPI_CS)) {
         lora_log("UYARI: SD Kart baslatilamadi! Loglama yapilmayacak.");
         sdOk = false;
     } else {
-        Serial.printf("  SD OK. Boyut: %llu MB, Tip: %d\n", SD.cardSize() / (1024ULL*1024ULL), SD.cardType());
+        DBGF("  SD OK. Boyut: %llu MB, Tip: %d\n", SD.cardSize() / (1024ULL*1024ULL), SD.cardType());
         lora_log("SD Kart baslatildi.");
         logFile = SD.open("/ucus_log.csv", FILE_APPEND);
         if (logFile) {
@@ -1002,10 +1029,10 @@ void setup() {
     }
 
     // Sensör Başlatma — BNO055
-    Serial.println("\n[BNO055] Baslatiliyor (adres 0x28, mod IMUPLUS 0x08)...");
+    DBGLN("\n[BNO055] Baslatiliyor (adres 0x28, mod IMUPLUS 0x08)...");
     if (!bno.begin(OPERATION_MODE_IMUPLUS)) {
         lora_log("KRITIK: BNO055 bulunamadi! Sistem durduruluyor.");
-        Serial.println("  !! BNO055 begin() BASARISIZ - I2C taramasinda 0x28 gorundu mu? Sistem duruyor.");
+        DBGLN("  !! BNO055 begin() BASARISIZ - I2C taramasinda 0x28 gorundu mu? Sistem duruyor.");
         while(true) { vTaskDelay(1000 / portTICK_PERIOD_MS); }
     }
     lora_log("BNO055 baslatildi (IMU mode 0x08).");
@@ -1031,16 +1058,16 @@ void setup() {
     }
 
     // BME280
-    Serial.println("\n[BME280] Baslatiliyor (adres 0x76 -> 0x77)...");
+    DBGLN("\n[BME280] Baslatiliyor (adres 0x76 -> 0x77)...");
     bool bme76 = bme.begin(BME280_ADDR_PRIMARY);
     bool bme77 = false;
     if (!bme76) bme77 = bme.begin(BME280_ADDR_SECONDARY);
     if (!bme76 && !bme77) {
         lora_log("KRITIK: BME280 bulunamadi! Sistem durduruluyor.");
-        Serial.println("  !! BME280 hicbir adreste bulunamadi. Sistem duruyor.");
+        DBGLN("  !! BME280 hicbir adreste bulunamadi. Sistem duruyor.");
         while(true) { vTaskDelay(1000 / portTICK_PERIOD_MS); }
     }
-    Serial.printf("  BME280 bulundu @ 0x%02X\n", bme76 ? BME280_ADDR_PRIMARY : BME280_ADDR_SECONDARY);
+    DBGF("  BME280 bulundu @ 0x%02X\n", bme76 ? BME280_ADDR_PRIMARY : BME280_ADDR_SECONDARY);
     lora_log("BME280 baslatildi.");
     bme.setSampling(Adafruit_BME280::MODE_NORMAL,
                     Adafruit_BME280::SAMPLING_X2,
@@ -1070,7 +1097,7 @@ void setup() {
       lora_log("KRITIK: Kuyruk olusturulamadi! Sistem durduruluyor.");
       while(true) { vTaskDelay(1000 / portTICK_PERIOD_MS); }
     }
-    Serial.printf("\n[KUYRUK] Olusturuldu: %d eleman x %u B = %u B\n",
+    DBGF("\n[KUYRUK] Olusturuldu: %d eleman x %u B = %u B\n",
                   TELEMETRY_QUEUE_LEN, (unsigned)sizeof(TelemetryPacket),
                   (unsigned)(TELEMETRY_QUEUE_LEN * sizeof(TelemetryPacket)));
 
@@ -1080,7 +1107,7 @@ void setup() {
     xTaskCreatePinnedToCore(Task2code, "HaberlesmeGörevi", TASK_STACK_SIZE, NULL, TASK2_PRIORITY, &Task2, 1);
 
     lora_log("Setup Tamam. Gorevler Dagitildi.");
-    Serial.println("\n>>> SETUP TAMAM. Periyodik durum dokumu basliyor...\n");
+    DBGLN("\n>>> SETUP TAMAM. Periyodik durum dokumu basliyor...\n");
 }
 
 void loop() {

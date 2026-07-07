@@ -22,6 +22,7 @@
 #include <SPI.h>
 #include <Adafruit_BME280.h>
 #include <Adafruit_Sensor.h>
+#include <Adafruit_BNO055.h>
 #include <TinyGPS++.h>
 #include <SD.h>
 #include <FS.h>
@@ -54,6 +55,8 @@
 #define PIN_SDKART_DET 35
 #define LORA_M0 15
 #define LORA_M1 2
+#define PIN_BUZZER 12   // Kurtarma beacon buzzer (main ile ayni)
+#define PIN_LED 13      // Kurtarma beacon LED (main ile ayni)
 
 // --- Haberlesme sabitleri ---
 #define BAUD_GPS               9600
@@ -67,6 +70,19 @@
 // --- Sensor sabitleri ---
 #define BME280_ADDR_PRIMARY   0x76
 #define BME280_ADDR_SECONDARY 0x77
+#define BNO055_DEF   55
+#define BNO055_ADDR  0x28
+
+// --- INIS TESPITI & BEACON SABITLERI (ayarlanabilir) ---
+// Not: bunlar "ucus algoritmasi" DEGIL; sadece "uctu mu / durdu mu" beacon mantigi.
+#define KALKIS_YUKSEKLIK      50.0   // m     - irtifa bunu gecince "uctu" (yerdeki yanlis tetigi onler)
+#define KALKIS_IVME_ESIGI     20.0   // m/s^2 - ivmeZ bunu asinca da "uctu" (alternatif tetik)
+#define REST_HIZ_ESIGI         1.0   // m/s   - |dikey hiz| bunun altinda = baro sabit
+#define REST_IVME_ESIGI        1.5   // m/s^2 - |dogrusal ivme| bunun altinda = durgun (IMU)
+#define REST_GYRO_ESIGI        0.2   // rad/s - |gyro| bunun altinda = durgun (IMU)
+#define INIS_STABIL_SURE_MS   5000   // ms    - bu sure boyunca kesintisiz durgun -> "indi"
+#define BEACON_BIP_MS          200   // ms    - buzzer bip suresi
+#define BEACON_PERIYOT_MS     1000   // ms    - bip periyodu (BEACON_BIP_MS ot + kalani sus)
 
 // --- FreeRTOS sabitleri ---
 #define TASK_STACK_SIZE 10000
@@ -107,11 +123,24 @@ SimpleKalmanFilter kf_irtifa(1.5, 1.5, 0.1);
 
 // --- Sensor nesneleri ---
 Adafruit_BME280 bme;
+Adafruit_BNO055 bno = Adafruit_BNO055(BNO055_DEF, BNO055_ADDR);
 TinyGPSPlus gps;
+bool bnoOk = false;   // BNO bulundu mu? (yoksa inis tespiti yalniz baro ile)
 
 // --- Sensor veri degiskenleri ---
 float basinc = 0, sicaklik = 0, nem = 0, irtifa = 0;
 float gpsEnlem = 0, gpsBoylam = 0;
+
+// --- INIS TESPITI DURUMU (yalniz lokal; pakete girmez) ---
+float max_irtifa = 0.0;
+bool  uctu = false;                 // gercekten ucti mi? (yerdeki yanlis tetigi onler)
+bool  indi = false;                 // indi mi? (latch — bulana kadar acik)
+unsigned long rest_baslangic = 0;   // durgunluk penceresi baslangici (0 = durgun degil)
+
+// Dikey hiz (baro turevi) — inis tespitindeki "baro sabit" kontrolu icin
+float onceki_irtifa = 0.0;
+unsigned long onceki_zaman = 0;
+float anlik_dikey_hiz = 0.0;
 
 // --- GOREV YUKU TELEMETRI PAKETI (BME280 + GPS; IMU/ucus alanlari YOK) ---
 #pragma pack(push, 1)
@@ -213,6 +242,32 @@ void lora_log(const char* msg) {
     uart_write_bytes(UART_NUM_1, "\r\n", 2);
 }
 
+// --- ANLIK DIKEY HIZ (baro irtifa turevi) ---
+// Inis tespitinde "baro sabit mi?" kontrolu icin kullanilir.
+float hesapla_dikey_hiz(float guncel_irtifa) {
+    unsigned long su_an = micros();
+    if (onceki_zaman == 0) { onceki_zaman = su_an; onceki_irtifa = guncel_irtifa; return 0.0; }
+    float dt = (float)(su_an - onceki_zaman) / 1000000.0f;
+    if (dt <= 0.0) return anlik_dikey_hiz;
+    float dh = guncel_irtifa - onceki_irtifa;
+    onceki_zaman = su_an; onceki_irtifa = guncel_irtifa;
+    return dh / dt;
+}
+
+// --- NON-BLOCKING KURTARMA BEACON ---
+// indi=true olunca LED sabit yanar, buzzer aralikli biper (BEACON_BIP_MS ot / kalani sus).
+// Her dongude cagrilir; indi degilse cikislar sondurulur.
+void beacon_guncelle() {
+    if (!indi) {
+        digitalWrite(PIN_LED, LOW);
+        digitalWrite(PIN_BUZZER, LOW);
+        return;
+    }
+    digitalWrite(PIN_LED, HIGH);   // latch: bulana kadar sabit yanar
+    bool bip = (millis() % BEACON_PERIYOT_MS) < BEACON_BIP_MS;
+    digitalWrite(PIN_BUZZER, bip ? HIGH : LOW);
+}
+
 // ─────────────────────────────────────────────────────────────
 // CORE 0: Sensor okuma (BME280 + GPS), Kalman, paketleme
 // UCUS ALGORITMASI YOK.
@@ -231,6 +286,42 @@ void Task1code(void *pvParameters) {
         gpsEnlem = gps.location.lat();
         gpsBoylam = gps.location.lng();
     }
+
+    // 2.5 BNO055 (IMU) — YALNIZ inis tespiti icin okunur; pakete GIRMEZ.
+    float ivmeX = 0, ivmeY = 0, ivmeZ = 0, gyroX = 0, gyroY = 0, gyroZ = 0;
+    if (bnoOk) {
+        sensors_event_t a, g;
+        bno.getEvent(&a, Adafruit_BNO055::VECTOR_LINEARACCEL); // yercekimsiz -> yerde ~0
+        ivmeX = a.acceleration.x; ivmeY = a.acceleration.y; ivmeZ = a.acceleration.z;
+        bno.getEvent(&g, Adafruit_BNO055::VECTOR_GYROSCOPE);
+        gyroX = g.gyro.x; gyroY = g.gyro.y; gyroZ = g.gyro.z;
+    }
+
+    // 2.6 INIS TESPITI (baro + IMU) — "uctu mu / durdu mu" (ucus algoritmasi DEGIL)
+    anlik_dikey_hiz = hesapla_dikey_hiz(irtifa);
+    if (irtifa > max_irtifa) max_irtifa = irtifa;
+    // Kalkis: gercekten yukseldi VEYA guclu ivme -> yerdeki yanlis tetigi onler
+    if (!uctu && (max_irtifa > KALKIS_YUKSEKLIK || ivmeZ > KALKIS_IVME_ESIGI)) {
+        uctu = true;
+    }
+    // Inis: uctuktan sonra INIS_STABIL_SURE_MS boyunca kesintisiz durgun kalirsa (latch)
+    if (uctu && !indi) {
+        float acc_mag  = sqrtf(ivmeX*ivmeX + ivmeY*ivmeY + ivmeZ*ivmeZ);
+        float gyro_mag = sqrtf(gyroX*gyroX + gyroY*gyroY + gyroZ*gyroZ);
+        bool baro_sabit = fabsf(anlik_dikey_hiz) < REST_HIZ_ESIGI;
+        bool imu_durgun = (acc_mag < REST_IVME_ESIGI) && (gyro_mag < REST_GYRO_ESIGI);
+        // IMU yoksa yalniz baro sabitligine bakilir
+        bool durgun = baro_sabit && (!bnoOk || imu_durgun);
+        if (durgun) {
+            if (rest_baslangic == 0) rest_baslangic = millis();
+            else if (millis() - rest_baslangic >= INIS_STABIL_SURE_MS) indi = true;
+        } else {
+            rest_baslangic = 0;   // durgunluk bozuldu -> pencereyi sifirla
+        }
+    }
+
+    // 2.7 Kurtarma beacon (non-blocking): indi olunca LED+buzzer
+    beacon_guncelle();
 
     // 3. Paketle ve Core 1'e gonder
     GorevYukuPaket packet;
@@ -272,6 +363,12 @@ void setup() {
     pinMode(LORA_M1, OUTPUT);
     digitalWrite(LORA_M0, LOW);
     digitalWrite(LORA_M1, LOW);
+
+    // Kurtarma beacon cikislari — baslangicta kapali
+    pinMode(PIN_BUZZER, OUTPUT);
+    pinMode(PIN_LED, OUTPUT);
+    digitalWrite(PIN_BUZZER, LOW);
+    digitalWrite(PIN_LED, LOW);
 
     // 2. DMA bellek + protokoller
     sd_dma_buf_A = (char*)heap_caps_malloc(SD_DMA_BUF_SIZE, MALLOC_CAP_DMA);
@@ -340,6 +437,16 @@ void setup() {
         char buf[40];
         snprintf(buf, sizeof(buf), "Referans Basinc (hPa): %.2f", referans_basinc);
         lora_log(buf);
+    }
+
+    // 6.2 BNO055 (IMU) — YALNIZ inis tespiti icin. Bulunamazsa sistem DURMAZ:
+    //     telemetri devam eder, inis tespiti yalniz baro ile yapilir.
+    if (bno.begin(OPERATION_MODE_IMUPLUS)) {
+        bnoOk = true;
+        lora_log("BNO055 baslatildi (IMU mode 0x08) - inis tespiti icin.");
+    } else {
+        bnoOk = false;
+        lora_log("UYARI: BNO055 bulunamadi! Inis tespiti yalniz baro ile yapilacak.");
     }
 
     // 7. Kuyruk
