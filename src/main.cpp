@@ -375,7 +375,12 @@ bool sdOk = false;
 // 400ms sonra funye_guncelle() otomatik kapatır.
 void Funye1Atesle(){
     if (!funye1_aktif) {
-        digitalWrite(PIN_FUNYE_1, HIGH);
+        // Gorsel gosterge: drogue LED her modda yakilir (latch — Durdur'a kadar yanik)
+        digitalWrite(PIN_LED_DROGUE, HIGH);
+        // SUT tezgah testinde (bayrak 1) gercek fünyeyi ATESLEME — sadece LED.
+        if (!(SUT_FUNYE_YERINE_LED && sitSutMod == MOD_SUT)) {
+            digitalWrite(PIN_FUNYE_1, HIGH);
+        }
         funye1_baslangic = millis();
         funye1_aktif = true;
         ayrilma1 = true;
@@ -384,7 +389,10 @@ void Funye1Atesle(){
 
 void Funye2Atesle(){
     if (!funye2_aktif) {
-        digitalWrite(PIN_FUNYE_2, HIGH);
+        digitalWrite(PIN_LED_ANA, HIGH);
+        if (!(SUT_FUNYE_YERINE_LED && sitSutMod == MOD_SUT)) {
+            digitalWrite(PIN_FUNYE_2, HIGH);
+        }
         funye2_baslangic = millis();
         funye2_aktif = true;
         ayrilma2 = true;
