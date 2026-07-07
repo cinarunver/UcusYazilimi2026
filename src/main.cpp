@@ -448,6 +448,57 @@ uint16_t crc16_ccitt(const uint8_t* data, size_t len) {
     return crc;
 }
 
+// FLOAT'i virgülden sonra 2 basamaga yuvarlar (Ek-7 s.7)
+static inline float yuvarla2(float v) {
+    return roundf(v * 100.0f) / 100.0f;
+}
+
+// --- ENDIANNESS (Ek-7: veri BIG ENDIAN gonderilir) ---
+static inline void float_to_be32(float v, uint8_t* out) {
+    uint8_t tmp[4];
+    memcpy(tmp, &v, 4);   // native little-endian
+    out[0] = tmp[3]; out[1] = tmp[2]; out[2] = tmp[1]; out[3] = tmp[0]; // MSB first
+}
+static inline float be32_to_float(const uint8_t* in) {
+    uint8_t tmp[4];
+    tmp[0] = in[3]; tmp[1] = in[2]; tmp[2] = in[1]; tmp[3] = in[0];
+    float v; memcpy(&v, tmp, 4);
+    return v;
+}
+
+// --- SİT PAKETİ GÖNDERME (TTL / UART0 / Serial) — Tablo 3, 36 byte ---
+// FLOAT32 alanlar BIG ENDIAN. Checksum = Header + 32B payload (mod 256).
+void gonder_sit_paketi() {
+    uint8_t pkt[SITSUT_DATA_BOYUT];
+    pkt[0] = 0xAB;
+    float_to_be32(yuvarla2(irtifa),          &pkt[1]);   // İRTİFA
+    float_to_be32(yuvarla2(basinc / 100.0f), &pkt[5]);   // BASINÇ (Pascal→mBar)
+    float_to_be32(yuvarla2(ivmeX),           &pkt[9]);
+    float_to_be32(yuvarla2(ivmeY),           &pkt[13]);
+    float_to_be32(yuvarla2(ivmeZ),           &pkt[17]);
+    float_to_be32(yuvarla2(roll),            &pkt[21]);  // AÇI X
+    float_to_be32(yuvarla2(pitch),           &pkt[25]);  // AÇI Y
+    float_to_be32(yuvarla2(yaw),             &pkt[29]);  // AÇI Z
+    uint8_t chk = 0;
+    for (int i = 0; i < 33; i++) chk += pkt[i];
+    pkt[33] = chk;
+    pkt[34] = 0x0D;
+    pkt[35] = 0x0A;
+    Serial.write(pkt, SITSUT_DATA_BOYUT);
+}
+
+// --- SUT DURUM PAKETİ GÖNDERME (TTL / UART0 / Serial) — Tablo 6, 6 byte ---
+// [0xAA][Data1][Data2][CHK][0x0D][0x0A]; CHK=(Header+Data1+Data2)&0xFF.
+void gonder_durum_paketi() {
+    uint8_t data1 = (uint8_t)(durum_bitleri & 0xFF);
+    uint8_t data2 = (uint8_t)((durum_bitleri >> 8) & 0xFF);
+    uint8_t chk   = (uint8_t)(SITSUT_HEADER + data1 + data2);
+    uint8_t paket[SITSUT_DURUM_BOYUT] = {
+        SITSUT_HEADER, data1, data2, chk, SITSUT_FOOTER1, SITSUT_FOOTER2
+    };
+    Serial.write(paket, SITSUT_DURUM_BOYUT);
+}
+
 // --- BUFFERLI (PING-PONG) SD YAZMA ---
 void bufferla_ve_yaz_sd(File& file, const TelemetryPacket& pkt) {
     char temp_line[160];
