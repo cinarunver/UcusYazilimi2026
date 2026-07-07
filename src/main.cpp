@@ -943,7 +943,8 @@ void Task2code(void *pvParameters) {
 }
 
 void setup() {
-    // 1. TTL kullanılmıyor — Serial başlatılmadı, pinler boşta
+    // 1. TTL — SİT/SUT komut alma icin Serial (UART0) baslatiliyor
+    Serial.begin(BAUD_TTL);
 
     // 2. Pin Modları ve Güvenlik (Tasklardan ÖNCE yapılmalı)
     pinMode(PIN_FUNYE_1, OUTPUT);
@@ -956,6 +957,11 @@ void setup() {
     pinMode(PIN_LED_1, OUTPUT);
     pinMode(PIN_LED_2, OUTPUT);
     pinMode(PIN_LED_3, OUTPUT);
+
+    // Drogue/Ana gosterge LED'lerini basta sondur (PIN_LED_1/PIN_LED_2 zaten OUTPUT)
+    digitalWrite(PIN_LED_DROGUE, LOW);
+    digitalWrite(PIN_LED_ANA, LOW);
+
     pinMode(PIN_SDKART_DET, INPUT_PULLUP); // SD kart algılama genelde pull-up gerektirir
 
     // LoRa mod pinleri — baslangicta normal (transparan) mod: M0=0, M1=0
