@@ -1,0 +1,167 @@
+{
+  "Debug/gorevyuku_debug.cpp": {
+    "mtime": 1783588611.5602355,
+    "ast_hash": "59c55712b3680060fd1955b3aafef07e",
+    "semantic_hash": ""
+  },
+  "Debug/main_debug.cpp": {
+    "mtime": 1783588634.727152,
+    "ast_hash": "464eef37fddcd1236cf42f03ae720332",
+    "semantic_hash": ""
+  },
+  "FunyeAtesleyici/funye_atesleyici.cpp": {
+    "mtime": 1783455096.061892,
+    "ast_hash": "a229c73f3839625fb0b9d4b119987213",
+    "semantic_hash": ""
+  },
+  "GorevYukuYazilimi/gorevyuku.cpp": {
+    "mtime": 1783588604.0948033,
+    "ast_hash": "2dba3b7a51b4b43c0f5ff59bd905283c",
+    "semantic_hash": ""
+  },
+  "I2C_Test/i2c_test.cpp": {
+    "mtime": 1783425447.7572196,
+    "ast_hash": "ac3eec65e0bc599a998e3154b513333f",
+    "semantic_hash": ""
+  },
+  "LoRa_Dinle/lora_dinle.cpp": {
+    "mtime": 1783090217.8390687,
+    "ast_hash": "bbb223b7f71c12d3e83afd7404029475",
+    "semantic_hash": ""
+  },
+  "RS232_Test/rs232_echo.cpp": {
+    "mtime": 1783363740.8672543,
+    "ast_hash": "2f0f9693b43c7388b951bab6e5e17f82",
+    "semantic_hash": ""
+  },
+  "RS232_Test/rs232_rx_test.py": {
+    "mtime": 1783363687.384427,
+    "ast_hash": "c23a293a4fe32ea5c172696b1d1d876b",
+    "semantic_hash": ""
+  },
+  "RS232_Test/rs232_test.cpp": {
+    "mtime": 1783346762.255159,
+    "ast_hash": "0a9537a8059cf9a247a850b9b3b247c1",
+    "semantic_hash": ""
+  },
+  "S\u0130T_SUT/S\u0130T-SUT.cpp": {
+    "mtime": 1783375052.6665215,
+    "ast_hash": "42bac6a09ce2be593d5be206134956b6",
+    "semantic_hash": ""
+  },
+  "S\u0130T_SUT/sit_sut_test.py": {
+    "mtime": 1783373311.2064915,
+    "ast_hash": "18451f46440103b23d4d6b3529e2ade3",
+    "semantic_hash": ""
+  },
+  "S\u0130T_SUT/test_sitsut/test_sit_sut.cpp": {
+    "mtime": 1777277338.6766243,
+    "ast_hash": "e620ef1fabe5ec613c871ebb9f9d5812",
+    "semantic_hash": ""
+  },
+  "Test videolari pertinaks/kalman_test.cpp": {
+    "mtime": 1783373517.708399,
+    "ast_hash": "f18da88adfd6218e13e9a5d2dd4eeaee",
+    "semantic_hash": ""
+  },
+  "Test videolari pertinaks/video parsed.cpp": {
+    "mtime": 1778505210.055648,
+    "ast_hash": "3822b74696f52c2ff66ea60d9d6eeb37",
+    "semantic_hash": ""
+  },
+  "Test videolari pertinaks/video.cpp": {
+    "mtime": 1778515775.490304,
+    "ast_hash": "a137c607ab45b7b16d52ab7cb986e791",
+    "semantic_hash": ""
+  },
+  "src/main.cpp": {
+    "mtime": 1783588628.4344978,
+    "ast_hash": "4db8eec30e43940b1605eaa3c73fe9ee",
+    "semantic_hash": ""
+  },
+  "test/test_ucus/test_main.cpp": {
+    "mtime": 1782913568.9516275,
+    "ast_hash": "94cd33636951f201d232d1b52bc7a7ff",
+    "semantic_hash": ""
+  },
+  ".superpowers/sdd/progress.md": {
+    "mtime": 1783448678.984846,
+    "ast_hash": "8e1a50628055542bffba5a7b92fa94f2",
+    "semantic_hash": ""
+  },
+  ".superpowers/sdd/task-1-brief.md": {
+    "mtime": 1783446117.2361147,
+    "ast_hash": "ab3a9c385c3243fb925b328b31521256",
+    "semantic_hash": ""
+  },
+  ".superpowers/sdd/task-1-report.md": {
+    "mtime": 1783446277.2008002,
+    "ast_hash": "323fc9ca3982a260e7c826272124861b",
+    "semantic_hash": ""
+  },
+  ".superpowers/sdd/task-2-brief.md": {
+    "mtime": 1783446464.3800778,
+    "ast_hash": "e559e46feaf26aea23db04ec3af590ce",
+    "semantic_hash": ""
+  },
+  ".superpowers/sdd/task-2-report.md": {
+    "mtime": 1783446564.7348964,
+    "ast_hash": "b84ae23378159597339674e06dcc29de",
+    "semantic_hash": ""
+  },
+  ".superpowers/sdd/task-3-brief.md": {
+    "mtime": 1783446674.535567,
+    "ast_hash": "3a920f7213b262bef2081b2e7344271a",
+    "semantic_hash": ""
+  },
+  ".superpowers/sdd/task-3-report.md": {
+    "mtime": 1783446751.1788976,
+    "ast_hash": "e10d710a61110d8fdda4ede006c991a6",
+    "semantic_hash": ""
+  },
+  ".superpowers/sdd/task-4-brief.md": {
+    "mtime": 1783446827.6628358,
+    "ast_hash": "2f5aef307492411bfa7b15e17fc370d1",
+    "semantic_hash": ""
+  },
+  ".superpowers/sdd/task-4-report.md": {
+    "mtime": 1783447025.156745,
+    "ast_hash": "28268b410ef9f756cb9b539f793fa4e9",
+    "semantic_hash": ""
+  },
+  ".superpowers/sdd/task-5-brief.md": {
+    "mtime": 1783447151.2103539,
+    "ast_hash": "3c516c0d93717c896f135d7f12852330",
+    "semantic_hash": ""
+  },
+  ".superpowers/sdd/task-5-report.md": {
+    "mtime": 1783447281.7877405,
+    "ast_hash": "e8813fa3500520a0eda7ae27ef7fb927",
+    "semantic_hash": ""
+  },
+  ".superpowers/sdd/task-6-brief.md": {
+    "mtime": 1783447517.5268857,
+    "ast_hash": "7b38da418dc78ad77efea10b4d13564d",
+    "semantic_hash": ""
+  },
+  ".superpowers/sdd/task-6-report.md": {
+    "mtime": 1783448484.0100718,
+    "ast_hash": "309ec7cc5a4bfd0c8decee80ab58769a",
+    "semantic_hash": ""
+  },
+  "README.md": {
+    "mtime": 1783375471.2879958,
+    "ast_hash": "410d86c5901bf6c44c2ace60cef15913",
+    "semantic_hash": ""
+  },
+  "docs/superpowers/plans/2026-07-07-sit-sut-main-entegrasyon.md": {
+    "mtime": 1783455096.0625489,
+    "ast_hash": "8675ef5f0a5f1470e85ca121233f734d",
+    "semantic_hash": ""
+  },
+  "docs/superpowers/specs/2026-07-07-sit-sut-main-entegrasyon-design.md": {
+    "mtime": 1783455096.0627348,
+    "ast_hash": "315df55c162ef21080d871bd5396c8ef",
+    "semantic_hash": ""
+  }
+}
