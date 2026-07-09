@@ -1,12 +1,12 @@
 {
   "Debug/gorevyuku_debug.cpp": {
-    "mtime": 1783592226.5892694,
-    "ast_hash": "5adea3c9bc54eb763e35f6fbee3c4cfb",
+    "mtime": 1783597979.1762786,
+    "ast_hash": "c1232b6de6ce1c6110802f384e071640",
     "semantic_hash": ""
   },
   "Debug/main_debug.cpp": {
-    "mtime": 1783588634.727152,
-    "ast_hash": "464eef37fddcd1236cf42f03ae720332",
+    "mtime": 1783598296.434483,
+    "ast_hash": "d1fc3d3df51c64f653f0ab095cb2aa1f",
     "semantic_hash": ""
   },
   "FunyeAtesleyici/funye_atesleyici.cpp": {
@@ -15,8 +15,8 @@
     "semantic_hash": ""
   },
   "GorevYukuYazilimi/gorevyuku.cpp": {
-    "mtime": 1783593191.4057486,
-    "ast_hash": "e84ff8514426af9d327e5e5cb56cce3d",
+    "mtime": 1783597979.1772594,
+    "ast_hash": "82a189654a255ed916799402dbbc9053",
     "semantic_hash": ""
   },
   "I2C_Test/i2c_test.cpp": {
@@ -75,8 +75,8 @@
     "semantic_hash": ""
   },
   "src/main.cpp": {
-    "mtime": 1783588628.4344978,
-    "ast_hash": "4db8eec30e43940b1605eaa3c73fe9ee",
+    "mtime": 1783598309.758501,
+    "ast_hash": "f51be87f2fc3f153e3ef67c5e7b97b52",
     "semantic_hash": ""
   },
   "test/test_ucus/test_main.cpp": {
@@ -162,6 +162,16 @@
   "docs/superpowers/specs/2026-07-07-sit-sut-main-entegrasyon-design.md": {
     "mtime": 1783455096.0627348,
     "ast_hash": "315df55c162ef21080d871bd5396c8ef",
+    "semantic_hash": ""
+  },
+  "GPS_Test/gps_test.cpp": {
+    "mtime": 1783596805.5461829,
+    "ast_hash": "0a50635e6b06c0447f28e5c7e0745b86",
+    "semantic_hash": ""
+  },
+  "LoRa_Test/lora_test.cpp": {
+    "mtime": 1783597618.244292,
+    "ast_hash": "e03b1abaf320b01b8190350d542bde91",
     "semantic_hash": ""
   }
 }

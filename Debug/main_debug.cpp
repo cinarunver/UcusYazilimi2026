@@ -100,8 +100,8 @@ float referans_basinc = 1013.25;
 #define PIN_LED_3 25
 #define PIN_LED_1 26
 #define PIN_FUNYE_1 27
-#define PIN_LORA_TX 32
-#define PIN_LORA_RX 33
+#define PIN_LORA_TX 33   // ESP TX -> LoRa DIN (modulun RXD'si)
+#define PIN_LORA_RX 32   // ESP RX <- LoRa DOUT (modulun TXD'si)
 #define PIN_SDKART_DET 35
 #define LORA_M0 15
 #define LORA_M1 2
@@ -122,7 +122,7 @@ float referans_basinc = 1013.25;
 // Alici tarafin AYNI modu beklemesi sart. Sadece bu satiri degistir:
 #define LORA_MODE_FRAMED     0
 #define LORA_MODE_STRING     1
-#define LORA_GONDERIM_MODU   LORA_MODE_STRING
+#define LORA_GONDERIM_MODU   LORA_MODE_FRAMED
 
 // STRING modunda LoRa'ya, serial monitordeki TAM debug dokumunun AYNISI basilir.
 // Ama 9600 baud havada ~960 B/sn tasir; tam dokum ~1.5 KB oldugundan 10 Hz SIGMAZ.

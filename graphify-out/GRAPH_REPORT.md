@@ -1,16 +1,16 @@
 # Graph Report - UcusYazilimi2026  (2026-07-09)
 
 ## Corpus Check
-- 35 files · ~42,253 words
+- 35 files · ~42,201 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 726 nodes · 804 edges · 102 communities (34 shown, 68 thin omitted)
+- 724 nodes · 800 edges · 102 communities (33 shown, 69 thin omitted)
 - Extraction: 100% EXTRACTED · 0% INFERRED · 0% AMBIGUOUS
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `23aa39b1`
+- Built from commit: `e1dcb9f5`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -127,8 +127,6 @@
 10. `SitPaketi` - 13 edges
 
 ## Surprising Connections (you probably didn't know these)
-- `gonder_paket_csv()` --references--> `TelemetryPacket`  [EXTRACTED]
-  SİT_SUT/SİT-SUT.cpp → SİT_SUT/SİT-SUT.cpp  _Bridges community 34 → community 1_
 - `bufferla_ve_yaz_sd()` --references--> `TelemetryPacket`  [EXTRACTED]
   test/test_ucus/test_main.cpp → test/test_ucus/test_main.cpp  _Bridges community 10 → community 24_
 - `cercevele()` --references--> `TelemetryPacket`  [EXTRACTED]
@@ -137,15 +135,15 @@
 ## Import Cycles
 - None detected.
 
-## Communities (102 total, 68 thin omitted)
+## Communities (102 total, 69 thin omitted)
 
 ### Community 0 - "Debug Firmware (main_debug)"
 Cohesion: 0.06
 Nodes (48): bufferla_ve_yaz_sd(), build_framed(), File, uart_port_t, crc16_ccitt(), dbg_append(), durum_adi(), Funye1Atesle() (+40 more)
 
 ### Community 1 - "SIT/SUT Reference Firmware"
-Cohesion: 0.07
-Nodes (37): HardwareSerial, Print, be32_to_float(), crc16_ccitt(), csv_alan(), float_to_be32(), Funye1Atesle(), Funye2Atesle() (+29 more)
+Cohesion: 0.05
+Nodes (45): HardwareSerial, Print, be32_to_float(), crc16_ccitt(), csv_alan(), float_to_be32(), Funye1Atesle(), Funye2Atesle() (+37 more)
 
 ### Community 2 - "Main Flight Firmware"
 Cohesion: 0.06
@@ -224,8 +222,8 @@ Cohesion: 0.09
 Nodes (21): Commit, Commit, Compilation Results, Concerns, Concerns, Edit 1: Serial (UART0) Başlat, Edit 2: Gösterge LED'lerini Başta Söndür, Edits Applied (+13 more)
 
 ### Community 34 - "TelemetryPacket"
-Cohesion: 0.10
-Nodes (21): TelemetryPacket, ayrilma1_durum, ayrilma2_durum, basinc, bmeSicaklik, dikeyHiz, eglimAcisi, gpsBoylam (+13 more)
+Cohesion: 0.15
+Nodes (13): SitPaketi, aciX, aciY, aciZ, basinc, checksum, footer1, footer2 (+5 more)
 
 ### Community 35 - "SİT/SUT'un Güncel Main'e Gömülmesi — Tasarım"
 Cohesion: 0.15
@@ -255,14 +253,10 @@ Nodes (8): Commit Bilgisi, Derleme Sonucu, Değişiklikler, Dosya: `src/main.cpp
 Cohesion: 0.25
 Nodes (7): Commit, Compile, Concerns, Edits applied, No ack/log prints, Queue body integrity check, Task 5 Report: Task2code — TTL parser + gecikmeli aktivasyon
 
-### Community 100 - "lora_test.cpp"
-Cohesion: 0.53
-Nodes (4): cift_bas(), lora_konfigurasyon(), lora_tum_ayarlari_bas(), setup()
-
 ## Knowledge Gaps
 - **410 isolated node(s):** `err_measure`, `err_estimate`, `q`, `last_estimate`, `kalman_gain` (+405 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **68 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **69 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
@@ -276,7 +270,7 @@ _Questions this graph is uniquely positioned to answer:_
 - **Should `Debug Firmware (main_debug)` be split into smaller, more focused modules?**
   _Cohesion score 0.06033182503770739 - nodes in this community are weakly interconnected._
 - **Should `SIT/SUT Reference Firmware` be split into smaller, more focused modules?**
-  _Cohesion score 0.06504065040650407 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.053877551020408164 - nodes in this community are weakly interconnected._
 - **Should `Main Flight Firmware` be split into smaller, more focused modules?**
   _Cohesion score 0.05697278911564626 - nodes in this community are weakly interconnected._
 - **Should `Payload Debug Firmware` be split into smaller, more focused modules?**

@@ -98,5 +98,7 @@
   "96": "Task1 / Core 0 UçuşGörevi (Priority 2, ~100 Hz)",
   "97": "Task2 / Core 1 HaberleşmeGörevi (Priority 1)",
   "98": "Eğim (Tilt) Açısı Hesabı ve NaN Koruması",
-  "99": "Üçlü Çapraz Onay (Drogue Ayrılma Güvenliği)"
+  "99": "Üçlü Çapraz Onay (Drogue Ayrılma Güvenliği)",
+  "100": "lora_test.cpp",
+  "101": "gps_test.cpp"
 }
