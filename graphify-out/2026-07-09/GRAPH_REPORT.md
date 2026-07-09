@@ -1,11 +1,11 @@
 # Graph Report - UcusYazilimi2026  (2026-07-09)
 
 ## Corpus Check
-- 33 files · ~40,972 words
+- 33 files · ~41,043 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 737 nodes · 813 edges · 100 communities (33 shown, 67 thin omitted)
+- 739 nodes · 815 edges · 100 communities (33 shown, 67 thin omitted)
 - Extraction: 100% EXTRACTED · 0% INFERRED · 0% AMBIGUOUS
 - Token cost: 0 input · 0 output
 
@@ -116,11 +116,11 @@
 1. `DebugSnapshot` - 37 edges
 2. `DebugSnapshot` - 35 edges
 3. `TelemetryPacket` - 24 edges
-4. `TelemetryPacket` - 23 edges
-5. `GorevYukuPaket` - 22 edges
+4. `GorevYukuPaket` - 23 edges
+5. `TelemetryPacket` - 23 edges
 6. `TelemetryPacket` - 22 edges
 7. `TelemetryPacket` - 20 edges
-8. `GorevYukuPaket` - 18 edges
+8. `GorevYukuPaket` - 19 edges
 9. `TelemetryPacket` - 17 edges
 10. `TelemetryPacket` - 16 edges
 
@@ -148,8 +148,8 @@ Cohesion: 0.06
 Nodes (45): be32_to_float(), bufferla_ve_yaz_sd(), File, uart_port_t, crc16_ccitt(), float_to_be32(), Funye1Atesle(), Funye2Atesle() (+37 more)
 
 ### Community 3 - "Payload Debug Firmware"
-Cohesion: 0.07
-Nodes (43): beacon_guncelle(), bufferla_ve_yaz_sd(), build_framed(), File, uart_port_t, crc16_ccitt(), dbg_append(), gonder_paket_framed_dma() (+35 more)
+Cohesion: 0.06
+Nodes (44): beacon_guncelle(), bufferla_ve_yaz_sd(), build_framed(), File, uart_port_t, crc16_ccitt(), dbg_append(), gonder_paket_framed_dma() (+36 more)
 
 ### Community 4 - "DebugSnapshot IMU Raw/Cal"
 Cohesion: 0.06
@@ -168,8 +168,8 @@ Cohesion: 0.07
 Nodes (27): hesapla_dikey_hiz(), logMesaj(), setup(), SimpleKalmanFilter, err_estimate, err_measure, first_run, kalman_gain (+19 more)
 
 ### Community 8 - "Payload Firmware (GorevYuku)"
-Cohesion: 0.07
-Nodes (36): beacon_guncelle(), bufferla_ve_yaz_sd(), File, uart_port_t, crc16_ccitt(), gonder_paket_framed_dma(), GorevYukuPaket, basinc (+28 more)
+Cohesion: 0.06
+Nodes (37): beacon_guncelle(), bufferla_ve_yaz_sd(), File, uart_port_t, crc16_ccitt(), gonder_paket_framed_dma(), GorevYukuPaket, basinc (+29 more)
 
 ### Community 9 - "Flight Logic Unit Tests"
 Cohesion: 0.08
@@ -252,19 +252,19 @@ Cohesion: 0.25
 Nodes (7): Commit, Compile, Concerns, Edits applied, No ack/log prints, Queue body integrity check, Task 5 Report: Task2code — TTL parser + gecikmeli aktivasyon
 
 ## Knowledge Gaps
-- **431 isolated node(s):** `err_measure`, `err_estimate`, `q`, `last_estimate`, `kalman_gain` (+426 more)
+- **433 isolated node(s):** `err_measure`, `err_estimate`, `q`, `last_estimate`, `kalman_gain` (+428 more)
   These have ≤1 connection - possible missing edges or undocumented components.
 - **67 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `DebugSnapshot` connect `DebugSnapshot IMU Raw/Cal` to `Debug Firmware (main_debug)`?**
-  _High betweenness centrality (0.009) - this node is a cross-community bridge._
 - **Why does `DebugSnapshot` connect `DebugSnapshot Payload Sensors` to `Payload Debug Firmware`?**
   _High betweenness centrality (0.009) - this node is a cross-community bridge._
+- **Why does `DebugSnapshot` connect `DebugSnapshot IMU Raw/Cal` to `Debug Firmware (main_debug)`?**
+  _High betweenness centrality (0.009) - this node is a cross-community bridge._
 - **What connects `err_measure`, `err_estimate`, `q` to the rest of the system?**
-  _443 weakly-connected nodes found - possible documentation gaps or missing edges._
+  _445 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Debug Firmware (main_debug)` be split into smaller, more focused modules?**
   _Cohesion score 0.06033182503770739 - nodes in this community are weakly interconnected._
 - **Should `SIT/SUT Reference Firmware` be split into smaller, more focused modules?**
@@ -272,4 +272,4 @@ _Questions this graph is uniquely positioned to answer:_
 - **Should `Main Flight Firmware` be split into smaller, more focused modules?**
   _Cohesion score 0.05697278911564626 - nodes in this community are weakly interconnected._
 - **Should `Payload Debug Firmware` be split into smaller, more focused modules?**
-  _Cohesion score 0.0666049953746531 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.06471631205673758 - nodes in this community are weakly interconnected._

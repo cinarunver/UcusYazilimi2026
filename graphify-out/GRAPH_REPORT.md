@@ -1,16 +1,16 @@
 # Graph Report - UcusYazilimi2026  (2026-07-09)
 
 ## Corpus Check
-- 33 files · ~41,043 words
+- 35 files · ~42,253 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 739 nodes · 815 edges · 100 communities (33 shown, 67 thin omitted)
+- 726 nodes · 804 edges · 102 communities (34 shown, 68 thin omitted)
 - Extraction: 100% EXTRACTED · 0% INFERRED · 0% AMBIGUOUS
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `a7698056`
+- Built from commit: `23aa39b1`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -111,20 +111,24 @@
 - Task2 / Core 1 HaberleşmeGörevi (Priority 1)
 - Eğim (Tilt) Açısı Hesabı ve NaN Koruması
 - Üçlü Çapraz Onay (Drogue Ayrılma Güvenliği)
+- lora_test.cpp
+- gps_test.cpp
 
 ## God Nodes (most connected - your core abstractions)
-1. `DebugSnapshot` - 37 edges
-2. `DebugSnapshot` - 35 edges
+1. `DebugSnapshot` - 35 edges
+2. `DebugSnapshot` - 34 edges
 3. `TelemetryPacket` - 24 edges
-4. `GorevYukuPaket` - 23 edges
-5. `TelemetryPacket` - 23 edges
-6. `TelemetryPacket` - 22 edges
-7. `TelemetryPacket` - 20 edges
-8. `GorevYukuPaket` - 19 edges
-9. `TelemetryPacket` - 17 edges
-10. `TelemetryPacket` - 16 edges
+4. `TelemetryPacket` - 23 edges
+5. `TelemetryPacket` - 22 edges
+6. `TelemetryPacket` - 20 edges
+7. `TelemetryPacket` - 17 edges
+8. `TelemetryPacket` - 16 edges
+9. `GorevYukuPaket` - 13 edges
+10. `SitPaketi` - 13 edges
 
 ## Surprising Connections (you probably didn't know these)
+- `gonder_paket_csv()` --references--> `TelemetryPacket`  [EXTRACTED]
+  SİT_SUT/SİT-SUT.cpp → SİT_SUT/SİT-SUT.cpp  _Bridges community 34 → community 1_
 - `bufferla_ve_yaz_sd()` --references--> `TelemetryPacket`  [EXTRACTED]
   test/test_ucus/test_main.cpp → test/test_ucus/test_main.cpp  _Bridges community 10 → community 24_
 - `cercevele()` --references--> `TelemetryPacket`  [EXTRACTED]
@@ -133,31 +137,31 @@
 ## Import Cycles
 - None detected.
 
-## Communities (100 total, 67 thin omitted)
+## Communities (102 total, 68 thin omitted)
 
 ### Community 0 - "Debug Firmware (main_debug)"
 Cohesion: 0.06
 Nodes (48): bufferla_ve_yaz_sd(), build_framed(), File, uart_port_t, crc16_ccitt(), dbg_append(), durum_adi(), Funye1Atesle() (+40 more)
 
 ### Community 1 - "SIT/SUT Reference Firmware"
-Cohesion: 0.05
-Nodes (45): HardwareSerial, Print, be32_to_float(), crc16_ccitt(), csv_alan(), float_to_be32(), Funye1Atesle(), Funye2Atesle() (+37 more)
+Cohesion: 0.07
+Nodes (37): HardwareSerial, Print, be32_to_float(), crc16_ccitt(), csv_alan(), float_to_be32(), Funye1Atesle(), Funye2Atesle() (+29 more)
 
 ### Community 2 - "Main Flight Firmware"
 Cohesion: 0.06
 Nodes (45): be32_to_float(), bufferla_ve_yaz_sd(), File, uart_port_t, crc16_ccitt(), float_to_be32(), Funye1Atesle(), Funye2Atesle() (+37 more)
 
 ### Community 3 - "Payload Debug Firmware"
-Cohesion: 0.06
-Nodes (44): beacon_guncelle(), bufferla_ve_yaz_sd(), build_framed(), File, uart_port_t, crc16_ccitt(), dbg_append(), gonder_paket_framed_dma() (+36 more)
+Cohesion: 0.09
+Nodes (34): beacon_guncelle(), bufferla_ve_yaz_sd(), build_framed(), File, uart_port_t, crc16_ccitt(), dbg_append(), gonder_paket_framed_dma() (+26 more)
 
 ### Community 4 - "DebugSnapshot IMU Raw/Cal"
 Cohesion: 0.06
 Nodes (35): DebugSnapshot, apo_A, apo_B, apo_D, bme_basinc_hpa, bme_nem, bme_sicaklik, cal_accel (+27 more)
 
 ### Community 5 - "DebugSnapshot Payload Sensors"
-Cohesion: 0.05
-Nodes (37): DebugSnapshot, anlik_dikey_hiz, cal_accel, cal_gyro, cal_mag, cal_sys, dongu_hz, dongu_sayaci (+29 more)
+Cohesion: 0.06
+Nodes (34): DebugSnapshot, anlik_dikey_hiz, cal_accel, cal_gyro, cal_mag, cal_sys, dongu_hz, dongu_sayaci (+26 more)
 
 ### Community 6 - "Video Parsed Firmware"
 Cohesion: 0.07
@@ -168,8 +172,8 @@ Cohesion: 0.07
 Nodes (27): hesapla_dikey_hiz(), logMesaj(), setup(), SimpleKalmanFilter, err_estimate, err_measure, first_run, kalman_gain (+19 more)
 
 ### Community 8 - "Payload Firmware (GorevYuku)"
-Cohesion: 0.06
-Nodes (37): beacon_guncelle(), bufferla_ve_yaz_sd(), File, uart_port_t, crc16_ccitt(), gonder_paket_framed_dma(), GorevYukuPaket, basinc (+29 more)
+Cohesion: 0.09
+Nodes (27): beacon_guncelle(), bufferla_ve_yaz_sd(), File, uart_port_t, crc16_ccitt(), gonder_paket_framed_dma(), GorevYukuPaket, basinc (+19 more)
 
 ### Community 9 - "Flight Logic Unit Tests"
 Cohesion: 0.08
@@ -220,8 +224,8 @@ Cohesion: 0.09
 Nodes (21): Commit, Commit, Compilation Results, Concerns, Concerns, Edit 1: Serial (UART0) Başlat, Edit 2: Gösterge LED'lerini Başta Söndür, Edits Applied (+13 more)
 
 ### Community 34 - "TelemetryPacket"
-Cohesion: 0.15
-Nodes (13): SitPaketi, aciX, aciY, aciZ, basinc, checksum, footer1, footer2 (+5 more)
+Cohesion: 0.10
+Nodes (21): TelemetryPacket, ayrilma1_durum, ayrilma2_durum, basinc, bmeSicaklik, dikeyHiz, eglimAcisi, gpsBoylam (+13 more)
 
 ### Community 35 - "SİT/SUT'un Güncel Main'e Gömülmesi — Tasarım"
 Cohesion: 0.15
@@ -251,25 +255,29 @@ Nodes (8): Commit Bilgisi, Derleme Sonucu, Değişiklikler, Dosya: `src/main.cpp
 Cohesion: 0.25
 Nodes (7): Commit, Compile, Concerns, Edits applied, No ack/log prints, Queue body integrity check, Task 5 Report: Task2code — TTL parser + gecikmeli aktivasyon
 
+### Community 100 - "lora_test.cpp"
+Cohesion: 0.53
+Nodes (4): cift_bas(), lora_konfigurasyon(), lora_tum_ayarlari_bas(), setup()
+
 ## Knowledge Gaps
-- **433 isolated node(s):** `err_measure`, `err_estimate`, `q`, `last_estimate`, `kalman_gain` (+428 more)
+- **410 isolated node(s):** `err_measure`, `err_estimate`, `q`, `last_estimate`, `kalman_gain` (+405 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **67 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **68 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `DebugSnapshot` connect `DebugSnapshot Payload Sensors` to `Payload Debug Firmware`?**
-  _High betweenness centrality (0.009) - this node is a cross-community bridge._
 - **Why does `DebugSnapshot` connect `DebugSnapshot IMU Raw/Cal` to `Debug Firmware (main_debug)`?**
   _High betweenness centrality (0.009) - this node is a cross-community bridge._
+- **Why does `DebugSnapshot` connect `DebugSnapshot Payload Sensors` to `Payload Debug Firmware`?**
+  _High betweenness centrality (0.007) - this node is a cross-community bridge._
 - **What connects `err_measure`, `err_estimate`, `q` to the rest of the system?**
-  _445 weakly-connected nodes found - possible documentation gaps or missing edges._
+  _422 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Debug Firmware (main_debug)` be split into smaller, more focused modules?**
   _Cohesion score 0.06033182503770739 - nodes in this community are weakly interconnected._
 - **Should `SIT/SUT Reference Firmware` be split into smaller, more focused modules?**
-  _Cohesion score 0.053877551020408164 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.06504065040650407 - nodes in this community are weakly interconnected._
 - **Should `Main Flight Firmware` be split into smaller, more focused modules?**
   _Cohesion score 0.05697278911564626 - nodes in this community are weakly interconnected._
 - **Should `Payload Debug Firmware` be split into smaller, more focused modules?**
-  _Cohesion score 0.06471631205673758 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.08961593172119488 - nodes in this community are weakly interconnected._

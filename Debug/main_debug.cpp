@@ -100,8 +100,8 @@ float referans_basinc = 1013.25;
 #define PIN_LED_3 25
 #define PIN_LED_1 26
 #define PIN_FUNYE_1 27
-#define PIN_LORA_TX 33
-#define PIN_LORA_RX 32
+#define PIN_LORA_TX 32
+#define PIN_LORA_RX 33
 #define PIN_SDKART_DET 35
 #define LORA_M0 15
 #define LORA_M1 2
