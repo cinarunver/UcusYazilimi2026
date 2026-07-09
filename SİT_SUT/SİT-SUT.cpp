@@ -52,8 +52,8 @@ float referans_basinc = 1013.25;
 #define PIN_BUZZER 12
 #define PIN_LED 13
 #define PIN_FUNYE_2 14
-#define PIN_GPS_RX 16
-#define PIN_GPS_TX 17
+#define PIN_GPS_RX 17
+#define PIN_GPS_TX 16
 #define PIN_SPI_CLK 18
 #define PIN_SPI_MISO 19
 #define PIN_I2C_SDA 21
