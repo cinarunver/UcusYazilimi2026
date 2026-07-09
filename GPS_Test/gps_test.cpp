@@ -34,8 +34,8 @@
 #define BAUD_GPS     9600 // GY-NEO-7M varsayilan
 
 // LoRa (Serial1) — ayni veriyi buradan da yayinliyoruz
-#define PIN_LORA_TX  33   // ESP TX -> LoRa DIN (modulun RXD'si)
-#define PIN_LORA_RX  32   // ESP RX <- LoRa DOUT (modulun TXD'si)
+#define PIN_LORA_TX  32   // ESP TX -> LoRa DIN (modulun RXD'si)
+#define PIN_LORA_RX  33   // ESP RX <- LoRa DOUT (modulun TXD'si)
 #define BAUD_LORA    9600
 #define LORA_M0      15
 #define LORA_M1      2

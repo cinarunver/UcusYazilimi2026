@@ -64,7 +64,7 @@
 //  >>> YARISMA ALANI - LORA ADRES & KANAL AYARLARI <<<
 // ============================================================
 #define LORA_ADDH    0x00   // Adres yuksek byte
-#define LORA_ADDL    0x01   // Adres dusuk byte
+#define LORA_ADDL    0x02   // Adres dusuk byte
 #define LORA_CHAN    0x16   // Kanal (Gorev Yuku'nden FARKLI sec!) frekans=410+CHAN MHz
 #define LORA_SPED    0x1C   // UART 9600 8N1 + hava hizi (degistirmeyin)
 
