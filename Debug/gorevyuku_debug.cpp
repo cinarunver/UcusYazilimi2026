@@ -217,7 +217,9 @@ float anlik_dikey_hiz = 0.0;
 struct GorevYukuPaket {
   float basinc, sicaklik, nem, irtifa; // BME280
   float gpsEnlem, gpsBoylam;           // GPS
-}; // 24 byte
+  float ivmeX, ivmeY, ivmeZ;           // BNO055 lineer ivme (m/s^2)
+  float gyroX, gyroY, gyroZ;           // BNO055 gyro (rad/s)
+}; // 48 byte
 #pragma pack(pop)
 
 // SD Kart Ping-Pong Buffer Tanımları
@@ -326,11 +328,12 @@ uint16_t crc16_ccitt(const uint8_t *data, size_t len) {
 
 // --- BUFFERLI (PING-PONG) SD YAZMA ---
 void bufferla_ve_yaz_sd(File &file, const GorevYukuPaket &pkt) {
-  char temp_line[128];
-  int line_len =
-      snprintf(temp_line, sizeof(temp_line), "%.2f,%.2f,%.2f,%.2f,%.6f,%.6f\n",
-               pkt.basinc, pkt.sicaklik, pkt.nem, pkt.irtifa, pkt.gpsEnlem,
-               pkt.gpsBoylam);
+  char temp_line[192];
+  int line_len = snprintf(
+      temp_line, sizeof(temp_line),
+      "%.2f,%.2f,%.2f,%.2f,%.6f,%.6f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f\n",
+      pkt.basinc, pkt.sicaklik, pkt.nem, pkt.irtifa, pkt.gpsEnlem, pkt.gpsBoylam,
+      pkt.ivmeX, pkt.ivmeY, pkt.ivmeZ, pkt.gyroX, pkt.gyroY, pkt.gyroZ);
 
   char *current_buf = (active_sd_buf == 0) ? sd_dma_buf_A : sd_dma_buf_B;
 
@@ -396,12 +399,13 @@ void gonder_paket_framed_serial(const GorevYukuPaket &pkt) {
 
 // --- CSV METIN PAKET GÖNDERME (STRING modu) ---
 void gonder_paket_string_dma(uart_port_t uart_num, const GorevYukuPaket &pkt) {
-  static char str_buf[128];
+  static char str_buf[192];
 
-  int n =
-      snprintf(str_buf, sizeof(str_buf),
-               "$TELEGY,%.2f,%.2f,%.2f,%.2f,%.6f,%.6f*\r\n", pkt.basinc,
-               pkt.sicaklik, pkt.nem, pkt.irtifa, pkt.gpsEnlem, pkt.gpsBoylam);
+  int n = snprintf(
+      str_buf, sizeof(str_buf),
+      "$TELEGY,%.2f,%.2f,%.2f,%.2f,%.6f,%.6f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f*\r\n",
+      pkt.basinc, pkt.sicaklik, pkt.nem, pkt.irtifa, pkt.gpsEnlem, pkt.gpsBoylam,
+      pkt.ivmeX, pkt.ivmeY, pkt.ivmeZ, pkt.gyroX, pkt.gyroY, pkt.gyroZ);
 
   if (n < 0)
     return;
@@ -668,6 +672,12 @@ void Task1code(void *pvParameters) {
     packet.irtifa = irtifa;
     packet.gpsEnlem = gpsEnlem;
     packet.gpsBoylam = gpsBoylam;
+    packet.ivmeX = ivmeX;
+    packet.ivmeY = ivmeY;
+    packet.ivmeZ = ivmeZ;
+    packet.gyroX = gyroX;
+    packet.gyroY = gyroY;
+    packet.gyroZ = gyroZ;
 
     xQueueSend(telemetryQueue, &packet, 0);
 
@@ -931,7 +941,8 @@ void setup() {
     logFile = SD.open("/gorevyuku_log.csv", FILE_APPEND);
     if (logFile) {
       if (logFile.size() == 0) {
-        logFile.println("basinc,sicaklik,nem,irtifa,lat,lng");
+        logFile.println("basinc,sicaklik,nem,irtifa,lat,lng,ivmeX,ivmeY,ivmeZ,"
+                        "gyroX,gyroY,gyroZ");
       }
       sdOk = true;
     } else {
