@@ -161,11 +161,29 @@ float anlik_dikey_hiz = 0.0;
 // --- GOREV YUKU TELEMETRI PAKETI (BME280 + GPS + BNO055 IMU; ucus alanlari YOK) ---
 #pragma pack(push, 1)
 struct GorevYukuPaket {
-    float basinc, sicaklik, nem, irtifa;   // BME280
+    float basinc, sicaklik, nem, irtifa;   // BME280 (basinc hPa)
     float gpsEnlem, gpsBoylam;             // GPS
     float ivmeX, ivmeY, ivmeZ;             // BNO055 lineer ivme (m/s^2)
     float gyroX, gyroY, gyroZ;             // BNO055 gyro (rad/s)
 };  // 12 float = 48 byte
+#pragma pack(pop)
+
+// --- HAVADAN GİDEN FIXED-POINT WIRE PAKET (28 byte) ---
+// GorevYukuPaket (float, 48B) yalniz queue + SD icin; LoRa'ya giderken bu
+// packed int wire pakete quantize edilir (paket kucultme). Little-endian.
+// Yer istasyonu Python format: '<HhHh2i6h'.
+// Olcekler: basinc hPa x10, sicaklik x100, nem x100, irtifa x10, GPS x1e7,
+//           ivme x100, gyro x10.
+#pragma pack(push, 1)
+struct GorevYukuWire {
+    uint16_t basinc;
+    int16_t  sicaklik;
+    uint16_t nem;
+    int16_t  irtifa;
+    int32_t  gpsEnlem, gpsBoylam;
+    int16_t  ivmeX, ivmeY, ivmeZ;
+    int16_t  gyroX, gyroY, gyroZ;
+};
 #pragma pack(pop)
 
 // SD ping-pong buffer
@@ -188,6 +206,50 @@ uint16_t crc16_ccitt(const uint8_t* data, size_t len) {
             crc = (crc & 0x8000) ? (crc << 1) ^ 0x1021 : (crc << 1);
     }
     return crc;
+}
+
+// --- FIXED-POINT QUANTIZE YARDIMCILARI (clamp + round; overflow yok) ---
+#define WIRE_OLCEK_BASINC  10.0f    // hPa x10 (uint16)
+#define WIRE_OLCEK_SICAK  100.0f    // C   x100
+#define WIRE_OLCEK_NEM    100.0f    // %   x100 (uint16)
+#define WIRE_OLCEK_IRTIFA  10.0f    // m   x10
+#define WIRE_OLCEK_IVME   100.0f    // m/s^2 x100
+#define WIRE_OLCEK_GYRO    10.0f    // dps/rad-s x10
+#define WIRE_OLCEK_GPS     1e7      // derece x1e7 (int32)
+
+static inline int16_t q16(float v, float scale) {
+    float x = roundf(v * scale);
+    if (x >  32767.0f) x =  32767.0f;
+    if (x < -32768.0f) x = -32768.0f;
+    return (int16_t)x;
+}
+static inline uint16_t qu16(float v, float scale) {
+    float x = roundf(v * scale);
+    if (x > 65535.0f) x = 65535.0f;
+    if (x < 0.0f)     x = 0.0f;
+    return (uint16_t)x;
+}
+static inline int32_t q32(double v, double scale) {
+    double x = round(v * scale);
+    if (x >  2147483647.0) x =  2147483647.0;
+    if (x < -2147483648.0) x = -2147483648.0;
+    return (int32_t)x;
+}
+
+// GorevYukuPaket (float) -> GorevYukuWire (packed int)
+static inline void pack_gorevyuku_wire(GorevYukuWire& w, const GorevYukuPaket& p) {
+    w.basinc   = qu16(p.basinc,   WIRE_OLCEK_BASINC);
+    w.sicaklik = q16(p.sicaklik,  WIRE_OLCEK_SICAK);
+    w.nem      = qu16(p.nem,      WIRE_OLCEK_NEM);
+    w.irtifa   = q16(p.irtifa,    WIRE_OLCEK_IRTIFA);
+    w.gpsEnlem  = q32(p.gpsEnlem,  WIRE_OLCEK_GPS);
+    w.gpsBoylam = q32(p.gpsBoylam, WIRE_OLCEK_GPS);
+    w.ivmeX = q16(p.ivmeX, WIRE_OLCEK_IVME);
+    w.ivmeY = q16(p.ivmeY, WIRE_OLCEK_IVME);
+    w.ivmeZ = q16(p.ivmeZ, WIRE_OLCEK_IVME);
+    w.gyroX = q16(p.gyroX, WIRE_OLCEK_GYRO);
+    w.gyroY = q16(p.gyroY, WIRE_OLCEK_GYRO);
+    w.gyroZ = q16(p.gyroZ, WIRE_OLCEK_GYRO);
 }
 
 // --- BUFFERLI (PING-PONG) SD YAZMA ---
@@ -220,10 +282,16 @@ void sd_buffer_bosalt(File& file) {
 }
 
 // --- CERCEVELI PAKET GONDERME (DMA DESTEKLI UART) ---
+// Float paket fixed-point wire pakete quantize edilir, sonra cerçevelenir.
+// Cerçeve: [0xAA][0x55][LEN=28][GorevYukuWire 28B][CRC16_HI][CRC16_LO] = 33B.
 void gonder_paket_framed_dma(uart_port_t uart_num, const GorevYukuPaket& pkt) {
     static uint8_t frame_buf[64];
-    const uint8_t* payload = (const uint8_t*)&pkt;
-    const size_t   len     = sizeof(GorevYukuPaket);
+
+    GorevYukuWire wire;
+    pack_gorevyuku_wire(wire, pkt);
+
+    const uint8_t* payload = (const uint8_t*)&wire;
+    const size_t   len     = sizeof(GorevYukuWire);   // 28
     uint16_t       crc     = crc16_ccitt(payload, len);
 
     size_t idx = 0;
