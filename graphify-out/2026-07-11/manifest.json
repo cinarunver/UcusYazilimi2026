@@ -1,7 +1,7 @@
 {
   "Debug/gorevyuku_debug.cpp": {
-    "mtime": 1783613502.0466688,
-    "ast_hash": "f4a9e5aafd9988ba1c05743517645e4c",
+    "mtime": 1783605804.0909505,
+    "ast_hash": "9cf034734a5acd2704f2b26ee24ec7be",
     "semantic_hash": ""
   },
   "Debug/main_debug.cpp": {
@@ -15,8 +15,8 @@
     "semantic_hash": ""
   },
   "GorevYukuYazilimi/gorevyuku.cpp": {
-    "mtime": 1783784616.0202956,
-    "ast_hash": "b9badd60822588fc22718091aae50f10",
+    "mtime": 1783605796.526804,
+    "ast_hash": "cbdfe3d88f638d88df6b0c40b2c833aa",
     "semantic_hash": ""
   },
   "I2C_Test/i2c_test.cpp": {
@@ -75,8 +75,8 @@
     "semantic_hash": ""
   },
   "src/main.cpp": {
-    "mtime": 1783782433.219144,
-    "ast_hash": "b9f337db04f9a92484c4f89f73d26147",
+    "mtime": 1783606912.5961318,
+    "ast_hash": "f0ae52236c526e49afcc92dd85b1ab73",
     "semantic_hash": ""
   },
   "test/test_ucus/test_main.cpp": {
@@ -85,28 +85,28 @@
     "semantic_hash": ""
   },
   ".superpowers/sdd/progress.md": {
-    "mtime": 1783780810.9546735,
-    "ast_hash": "528ec25776d2ed1de66aa3522662c4cb",
+    "mtime": 1783448678.984846,
+    "ast_hash": "8e1a50628055542bffba5a7b92fa94f2",
     "semantic_hash": ""
   },
   ".superpowers/sdd/task-1-brief.md": {
-    "mtime": 1783777285.0211124,
-    "ast_hash": "aa3d091c559da3a0c4bee80564c051ab",
+    "mtime": 1783446117.2361147,
+    "ast_hash": "ab3a9c385c3243fb925b328b31521256",
     "semantic_hash": ""
   },
   ".superpowers/sdd/task-1-report.md": {
-    "mtime": 1783778219.3891654,
-    "ast_hash": "04f723c389ffd93a9af8f99230760227",
+    "mtime": 1783446277.2008002,
+    "ast_hash": "323fc9ca3982a260e7c826272124861b",
     "semantic_hash": ""
   },
   ".superpowers/sdd/task-2-brief.md": {
-    "mtime": 1783778432.6439044,
-    "ast_hash": "db0f3d08daecc48ea9a9b64bbfc040f9",
+    "mtime": 1783446464.3800778,
+    "ast_hash": "e559e46feaf26aea23db04ec3af590ce",
     "semantic_hash": ""
   },
   ".superpowers/sdd/task-2-report.md": {
-    "mtime": 1783779209.3545423,
-    "ast_hash": "0010405c08caacf697de2adbf241bccd",
+    "mtime": 1783446564.7348964,
+    "ast_hash": "b84ae23378159597339674e06dcc29de",
     "semantic_hash": ""
   },
   ".superpowers/sdd/task-3-brief.md": {
@@ -172,36 +172,6 @@
   "LoRa_Test/lora_test.cpp": {
     "mtime": 1783606640.5154035,
     "ast_hash": "602e367bdfb0ded5becadfcbf8446980",
-    "semantic_hash": ""
-  },
-  "GorevYukuYazilimi/host_led_durum_bgy.cpp": {
-    "mtime": 1783784153.6398575,
-    "ast_hash": "3e1a4178aed2764728403a3ee2ee79a5",
-    "semantic_hash": ""
-  },
-  "GorevYukuYazilimi/led_durum_bgy.h": {
-    "mtime": 1783784187.5090966,
-    "ast_hash": "2a4638fb91f1f19a2e40d094d78c0ab1",
-    "semantic_hash": ""
-  },
-  "src/led_durum.h": {
-    "mtime": 1783777393.261562,
-    "ast_hash": "feb2cbe287c58c0978f416ad6f95f2b9",
-    "semantic_hash": ""
-  },
-  "test/host_led_durum.cpp": {
-    "mtime": 1783777365.135235,
-    "ast_hash": "5cd8f9a3c3489b113867829d708aba59",
-    "semantic_hash": ""
-  },
-  "docs/superpowers/plans/2026-07-11-led-durum-gostergesi.md": {
-    "mtime": 1783777113.9783118,
-    "ast_hash": "5232ed9173745a36e736d93b552cc434",
-    "semantic_hash": ""
-  },
-  "docs/superpowers/specs/2026-07-11-led-durum-gostergesi-design.md": {
-    "mtime": 1783776713.0701227,
-    "ast_hash": "187c25aad9317b8bdee1e8e9b384c480",
     "semantic_hash": ""
   }
 }

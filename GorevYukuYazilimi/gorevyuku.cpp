@@ -79,7 +79,7 @@
 // --- Cerceve protokolu ---
 #define SYNC_BYTE_1          0xAA
 #define SYNC_BYTE_2          0x55
-#define LORA_GONDERIM_ORANI    10   // her 10. paket -> ~10 Hz
+#define LORA_GONDERIM_ORANI    1   // her 1. paket -> ~10 Hz
 
 // --- Sensor sabitleri ---
 #define BME280_ADDR_PRIMARY   0x76
