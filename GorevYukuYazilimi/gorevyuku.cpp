@@ -28,7 +28,46 @@
 #include <FS.h>
 #include "driver/uart.h"
 #include "esp_heap_caps.h"
-#include "led_durum_bgy.h"   // saf LED karar mantigi + beacon zamanlama sabitleri
+
+// ============================================================
+//  KURTARMA BEACON + LED KARAR MANTIGI (eski led_durum_bgy.h — koda gomuldu)
+// ============================================================
+// LED flash ile buzzer bip AYNI millis() fazindan beslenir -> dogal senkron.
+#define BEACON_BIP_MS       200   // ms - beacon "acik" suresi
+#define BEACON_PERIYOT_MS  1000   // ms - beacon periyodu (BIP_MS acik + kalani sonuk)
+
+// Gorev yukunun 4 gosterge cikisi: 3 durum LED'i (26/4/25) + kurtarma beacon LED'i (13)
+struct LedDurumBgy { bool led1; bool led2; bool led3; bool beacon; };
+
+// LED karar mantigi — hardware'siz, saf. Yalniz sistem_hazir + uctu + indi'ye bagli.
+//   sistem_hazir: setup() bitince true; false iken 3 durum LED'i 1 Hz blink (config)
+//   uctu        : irtifa/ivme esigini gecince true (ucusa gecti)
+//   indi        : indikten sonra latch true -> kurtarma beacon (en oncelikli)
+//   now_ms      : millis()  (blink/flash fazi icin)
+static inline LedDurumBgy hesapla_led_durumu_bgy(bool sistem_hazir, bool uctu,
+                                                 bool indi, unsigned long now_ms) {
+    LedDurumBgy d = {false, false, false, false};
+
+    // 1) Indi (en oncelikli): 4 cikis da buzzer ritminde senkron flash = kurtarma beacon
+    if (indi) {
+        bool flash = (now_ms % BEACON_PERIYOT_MS) < BEACON_BIP_MS;
+        d.led1 = d.led2 = d.led3 = d.beacon = flash;
+        return d;
+    }
+
+    // 2) Config bitmedi -> 3 durum LED'i 1 Hz blink (beacon kapali)
+    if (!sistem_hazir) {
+        bool acik = ((now_ms / 500) % 2 == 0);
+        d.led1 = d.led2 = d.led3 = acik;
+        return d;
+    }
+
+    // 3) Config bitti: bekliyor (uctu=false) -> 3 LED sabit ; ucusta -> hepsi kapali
+    if (!uctu) {
+        d.led1 = d.led2 = d.led3 = true;
+    }
+    return d;
+}
 
 // ============================================================
 //  >>> YARISMA ALANI - LORA ADRES & KANAL AYARLARI <<<
@@ -95,7 +134,7 @@
 #define REST_IVME_ESIGI        1.5   // m/s^2 - |dogrusal ivme| bunun altinda = durgun (IMU)
 #define REST_GYRO_ESIGI        0.2   // rad/s - |gyro| bunun altinda = durgun (IMU)
 #define INIS_STABIL_SURE_MS   5000   // ms    - bu sure boyunca kesintisiz durgun -> "indi"
-// BEACON_BIP_MS / BEACON_PERIYOT_MS -> led_durum_bgy.h (LED flash + buzzer ayni fazdan senkron)
+// BEACON_BIP_MS / BEACON_PERIYOT_MS -> yukarida gomulu bolumde (LED flash + buzzer ayni fazdan senkron)
 
 // --- FreeRTOS sabitleri ---
 #define TASK_STACK_SIZE 10000
@@ -353,7 +392,7 @@ void beacon_guncelle() {
 }
 
 // --- LED GOSTERGE SURUCUSU (tek merkez: 3 durum LED'i 26/4/25 + beacon LED 13) ---
-// Karar mantigi led_durum_bgy.h'deki saf fonksiyonda; burada sadece pinlere yazilir.
+// Karar mantigi yukaridaki gomulu saf fonksiyonda; burada sadece pinlere yazilir.
 void led_uygula() {
     LedDurumBgy d = hesapla_led_durumu_bgy(sistem_hazir, uctu, indi, millis());
     digitalWrite(PIN_LED_1, d.led1 ? HIGH : LOW);

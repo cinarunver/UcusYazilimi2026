@@ -1,16 +1,16 @@
 # Graph Report - UcusYazilimi2026  (2026-07-12)
 
 ## Corpus Check
-- 43 files · ~52,409 words
+- 39 files · ~51,811 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 827 nodes · 921 edges · 120 communities (52 shown, 68 thin omitted)
-- Extraction: 100% EXTRACTED · 0% INFERRED · 0% AMBIGUOUS · INFERRED: 4 edges (avg confidence: 0.8)
+- 824 nodes · 916 edges · 120 communities (52 shown, 68 thin omitted)
+- Extraction: 100% EXTRACTED · 0% INFERRED · 0% AMBIGUOUS
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `f6ab4bc6`
+- Built from commit: `a015f454`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -145,14 +145,16 @@
 10. `TelemetryPacket` - 16 edges
 
 ## Surprising Connections (you probably didn't know these)
-- `main()` --calls--> `hesapla_led_durumu()`  [INFERRED]
-  test/host_led_durum.cpp → src/led_durum.h
-- `led_uygula()` --calls--> `hesapla_led_durumu_bgy()`  [INFERRED]
-  GorevYukuYazilimi/gorevyuku.cpp → GorevYukuYazilimi/led_durum_bgy.h
-- `led_uygula()` --calls--> `hesapla_led_durumu()`  [INFERRED]
-  src/main.cpp → src/led_durum.h
-- `main()` --calls--> `hesapla_led_durumu_bgy()`  [INFERRED]
-  GorevYukuYazilimi/host_led_durum_bgy.cpp → GorevYukuYazilimi/led_durum_bgy.h
+- `hesapla_led_durumu_bgy()` --references--> `LedDurumBgy`  [EXTRACTED]
+  GorevYukuYazilimi/gorevyuku.cpp → GorevYukuYazilimi/gorevyuku.cpp  _Bridges community 118 → community 109_
+- `bufferla_ve_yaz_sd()` --references--> `GorevYukuPaket`  [EXTRACTED]
+  GorevYukuYazilimi/gorevyuku.cpp → GorevYukuYazilimi/gorevyuku.cpp  _Bridges community 8 → community 117_
+- `pack_gorevyuku_wire()` --references--> `GorevYukuPaket`  [EXTRACTED]
+  GorevYukuYazilimi/gorevyuku.cpp → GorevYukuYazilimi/gorevyuku.cpp  _Bridges community 8 → community 109_
+- `pack_gorevyuku_wire()` --references--> `GorevYukuWire`  [EXTRACTED]
+  GorevYukuYazilimi/gorevyuku.cpp → GorevYukuYazilimi/gorevyuku.cpp  _Bridges community 110 → community 109_
+- `gonder_paket_framed_dma()` --calls--> `pack_gorevyuku_wire()`  [EXTRACTED]
+  GorevYukuYazilimi/gorevyuku.cpp → GorevYukuYazilimi/gorevyuku.cpp  _Bridges community 109 → community 117_
 
 ## Import Cycles
 - None detected.
@@ -292,8 +294,8 @@ Cohesion: 0.22
 Nodes (7): SimpleKalmanFilter, err_estimate, err_measure, first_run, kalman_gain, last_estimate, q
 
 ### Community 105 - "hesapla_led_durumu"
-Cohesion: 0.32
-Nodes (6): LedDurum, hesapla_led_durumu(), LedDurum, esit(), main(), UcusDurumu
+Cohesion: 0.33
+Nodes (6): hesapla_led_durumu(), LedDurum, led1, led2, led3, UcusDurumu
 
 ### Community 106 - "gonder_paket_framed_dma"
 Cohesion: 0.50
@@ -308,8 +310,8 @@ Cohesion: 0.18
 Nodes (11): TelemetryWire, dikeyHiz, durum, eglimAcisi, gpsBoylam, gpsEnlem, irtifa, ivmeToplam (+3 more)
 
 ### Community 109 - "gorevyuku.cpp"
-Cohesion: 0.24
-Nodes (11): beacon_guncelle(), hesapla_dikey_hiz(), led_uygula(), lora_konfigurasyon(), lora_log(), pack_gorevyuku_wire(), q16(), q32() (+3 more)
+Cohesion: 0.23
+Nodes (12): beacon_guncelle(), hesapla_dikey_hiz(), hesapla_led_durumu_bgy(), led_uygula(), lora_konfigurasyon(), lora_log(), pack_gorevyuku_wire(), q16() (+4 more)
 
 ### Community 110 - "GorevYukuWire"
 Cohesion: 0.18
@@ -344,15 +346,15 @@ Cohesion: 0.33
 Nodes (7): bufferla_ve_yaz_sd(), File, uart_port_t, crc16_ccitt(), gonder_paket_framed_dma(), sd_buffer_bosalt(), Task2code()
 
 ### Community 118 - "hesapla_led_durumu_bgy"
-Cohesion: 0.38
-Nodes (5): LedDurumBgy, esit(), main(), LedDurumBgy, hesapla_led_durumu_bgy()
+Cohesion: 0.40
+Nodes (5): LedDurumBgy, beacon, led1, led2, led3
 
 ### Community 119 - "pack_telemetry_wire"
 Cohesion: 0.29
 Nodes (7): uart_port_t, crc16_ccitt(), gonder_paket_framed_dma(), pack_telemetry_wire(), q16(), q32(), qu16()
 
 ## Knowledge Gaps
-- **474 isolated node(s):** `err_measure`, `err_estimate`, `q`, `last_estimate`, `kalman_gain` (+469 more)
+- **481 isolated node(s):** `err_measure`, `err_estimate`, `q`, `last_estimate`, `kalman_gain` (+476 more)
   These have ≤1 connection - possible missing edges or undocumented components.
 - **68 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
@@ -366,7 +368,7 @@ _Questions this graph is uniquely positioned to answer:_
 - **Why does `TelemetryPacket` connect `Main Flight Firmware` to `gonder_paket_framed_dma`, `main.cpp`, `pack_telemetry_wire`?**
   _High betweenness centrality (0.004) - this node is a cross-community bridge._
 - **What connects `err_measure`, `err_estimate`, `q` to the rest of the system?**
-  _486 weakly-connected nodes found - possible documentation gaps or missing edges._
+  _493 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Debug Firmware (main_debug)` be split into smaller, more focused modules?**
   _Cohesion score 0.06033182503770739 - nodes in this community are weakly interconnected._
 - **Should `SIT/SUT Reference Firmware` be split into smaller, more focused modules?**

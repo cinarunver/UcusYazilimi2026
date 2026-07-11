@@ -9,7 +9,55 @@
 #include <FS.h>
 #include "driver/uart.h"      // DMA destekli UART sürücüsü
 #include "esp_heap_caps.h"    // DMA uyumlu bellek yönetimi
-#include "led_durum.h"       // LED karar mantigi (enum UcusDurumu burada)
+
+// ============================================================
+//  UCUS DURUM MAKINESI + LED KARAR MANTIGI (eski led_durum.h — koda gomuldu)
+//  Donanimsiz saf fonksiyon: yalnizca mod + sistem_hazir + durum'a bagli.
+// ============================================================
+enum UcusDurumu {
+    HAZIR      = 0, // Rampa uzerinde, kalkis bekleniyor
+    YUKSELIYOR = 1, // Kalkis algilandi, yukselme fazi
+    INIS_1     = 2, // Apogee gecildi, drogue parasut acildi
+    INIS_2     = 3, // Alcak irtifa, ana parasut acildi
+    INDI       = 4  // Yere inis tamamlandi, sistem pasif
+};
+
+// 3 gosterge LED'inin anlik yanma durumu
+struct LedDurum { bool led1; bool led2; bool led3; };
+
+// LED karar mantigi — hardware'siz, saf.
+//   normal_mod : true = MOD_BEKLEME (normal ucus), false = SIT/SUT
+//   sistem_hazir: setup() bittiginde true; false iken config blink
+//   now_ms      : millis() (blink fazi icin)
+static inline LedDurum hesapla_led_durumu(bool normal_mod, bool sistem_hazir,
+                                          UcusDurumu durum, unsigned long now_ms) {
+    LedDurum d = {false, false, false};
+
+    // SIT/SUT: config/HAZIR gostergesi yok. LED'ler durumdan turer (drogue/ana), led3 kapali.
+    if (!normal_mod) {
+        d.led1 = (durum >= INIS_1);
+        d.led2 = (durum >= INIS_2);
+        d.led3 = false;
+        return d;
+    }
+
+    // Normal mod, config bitmedi -> 3'u birlikte 1 Hz blink
+    if (!sistem_hazir) {
+        bool acik = ((now_ms / 500) % 2 == 0);
+        d.led1 = d.led2 = d.led3 = acik;
+        return d;
+    }
+
+    // Normal mod, config bitti -> state machine
+    switch (durum) {
+        case HAZIR:      d.led1 = d.led2 = d.led3 = true;  break; // hepsi sabit
+        case YUKSELIYOR: /* hepsi kapali */                break;
+        case INIS_1:     d.led1 = true;                    break;
+        case INIS_2:     d.led1 = true; d.led2 = true;     break;
+        case INDI:       d.led1 = d.led2 = d.led3 = true;  break;
+    }
+    return d;
+}
 
 // ============================================================
 //  >>> YARISMA ALANI - LORA ADRES & KANAL AYARLARI <<<
@@ -234,7 +282,7 @@ float referans_basinc = 1013.25;
 TaskHandle_t Task1;
 TaskHandle_t Task2;
 
-// Uçuş Durum Makinesi (enum UcusDurumu artik led_durum.h icinde)
+// Uçuş Durum Makinesi (enum UcusDurumu yukarida, gomulu bolumde)
 UcusDurumu durum = HAZIR;
 
 // setup() tamamlaninca true olur; false iken LED'ler config blink yapar
@@ -440,7 +488,7 @@ void funye_guncelle() {
 }
 
 // --- LED GOSTERGE SURUCUSU (tek merkez) ---
-// Karar mantigi led_durum.h'deki saf fonksiyonda; burada sadece pinlere yazilir.
+// Karar mantigi yukaridaki gomulu saf fonksiyonda; burada sadece pinlere yazilir.
 void led_uygula() {
     bool normal_mod = (sitSutMod == MOD_BEKLEME);
     LedDurum d = hesapla_led_durumu(normal_mod, sistem_hazir, durum, millis());
