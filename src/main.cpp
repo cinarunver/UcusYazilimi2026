@@ -1097,6 +1097,7 @@ void setup() {
     for (int i = 0; i < 20; i++) {
         basinc_toplam += bme.readPressure() / 100.0F; // Pascal → hPa
         delay(50);
+        led_uygula(); // config blink (sistem_hazir henüz false)
     }
     referans_basinc = basinc_toplam / 20.0;
     {
