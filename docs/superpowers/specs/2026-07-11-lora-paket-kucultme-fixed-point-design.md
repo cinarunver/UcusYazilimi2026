@@ -68,7 +68,7 @@ Yeni `GorevYukuWire` (packed, little-endian):
 
 | Alan | Tip | Ölçek | Byte | Not |
 |---|---|---|---|---|
-| basinc | uint16 | Pa/2 | 2 | 2 Pa çöz., 0–131 kPa |
+| basinc | uint16 | hPa×10 | 2 | 0.1 hPa çöz., 0–6553 hPa (firmware basinc'i hPa tutar) |
 | sicaklik | int16 | ×100 | 2 | °C |
 | nem | uint16 | ×100 | 2 | %RH |
 | irtifa | int16 | ×10 | 2 | 0.1 m |
