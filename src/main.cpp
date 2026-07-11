@@ -9,6 +9,7 @@
 #include <FS.h>
 #include "driver/uart.h"      // DMA destekli UART sürücüsü
 #include "esp_heap_caps.h"    // DMA uyumlu bellek yönetimi
+#include "led_durum.h"       // LED karar mantigi (enum UcusDurumu burada)
 
 // ============================================================
 //  >>> YARISMA ALANI - LORA ADRES & KANAL AYARLARI <<<
@@ -229,15 +230,11 @@ float referans_basinc = 1013.25;
 TaskHandle_t Task1;
 TaskHandle_t Task2;
 
-// Uçuş Durum Makinesi (State Machine)
-enum UcusDurumu {
-    HAZIR      = 0, // Rampa üzerinde, kalkış bekleniyor
-    YUKSELIYOR = 1, // Kalkış algılandı, yükselme fazı
-    INIS_1     = 2, // Apogee geçildi, drogue (küçük) paraşüt açıldı
-    INIS_2     = 3, // Alçak irtifaya inildi, ana paraşüt açıldı
-    INDI       = 4  // Yere iniş tamamlandı, sistem pasif
-};
+// Uçuş Durum Makinesi (enum UcusDurumu artik led_durum.h icinde)
 UcusDurumu durum = HAZIR;
+
+// setup() tamamlaninca true olur; false iken LED'ler config blink yapar
+volatile bool sistem_hazir = false;
 
 // SİT/SUT Mod Durum Makinesi (Task2 tarafindan yonetilir)
 enum SitSutModu {
@@ -385,8 +382,6 @@ bool sdOk = false;
 // 400ms sonra funye_guncelle() otomatik kapatır.
 void Funye1Atesle(){
     if (!funye1_aktif) {
-        // Gorsel gosterge: drogue LED her modda yakilir (latch — Durdur'a kadar yanik)
-        digitalWrite(PIN_LED_DROGUE, HIGH);
         // SUT tezgah testinde (bayrak 1) gercek fünyeyi ATESLEME — sadece LED.
         if (!(SUT_FUNYE_YERINE_LED && sitSutMod == MOD_SUT)) {
             digitalWrite(PIN_FUNYE_1, HIGH);
@@ -399,7 +394,6 @@ void Funye1Atesle(){
 
 void Funye2Atesle(){
     if (!funye2_aktif) {
-        digitalWrite(PIN_LED_ANA, HIGH);
         if (!(SUT_FUNYE_YERINE_LED && sitSutMod == MOD_SUT)) {
             digitalWrite(PIN_FUNYE_2, HIGH);
         }
@@ -419,6 +413,16 @@ void funye_guncelle() {
         digitalWrite(PIN_FUNYE_2, LOW);
         funye2_aktif = false;
     }
+}
+
+// --- LED GOSTERGE SURUCUSU (tek merkez) ---
+// Karar mantigi led_durum.h'deki saf fonksiyonda; burada sadece pinlere yazilir.
+void led_uygula() {
+    bool normal_mod = (sitSutMod == MOD_BEKLEME);
+    LedDurum d = hesapla_led_durumu(normal_mod, sistem_hazir, durum, millis());
+    digitalWrite(PIN_LED_1, d.led1 ? HIGH : LOW);
+    digitalWrite(PIN_LED_2, d.led2 ? HIGH : LOW);
+    digitalWrite(PIN_LED_3, d.led3 ? HIGH : LOW);
 }
 
 // Görseldeki formüle göre Anlık Dikey Hız (Vz) Hesaplama Fonksiyonu
@@ -645,8 +649,6 @@ void Task1code(void *pvParameters) {
         funye2_aktif = false;
         digitalWrite(PIN_FUNYE_1, LOW);
         digitalWrite(PIN_FUNYE_2, LOW);
-        digitalWrite(PIN_LED_DROGUE, LOW);
-        digitalWrite(PIN_LED_ANA, LOW);
         onceki_mod = simdiki_mod;
     }
 
@@ -700,6 +702,9 @@ void Task1code(void *pvParameters) {
 
     // --- FÜNYE ZAMANLAMA KONTROLÜ (Non-Blocking) ---
     funye_guncelle();
+
+    // --- LED GOSTERGELERINI GUNCELLE ---
+    led_uygula();
 
     // --- UÇUŞ ALGORİTMASI ---
     switch (durum) {
@@ -1062,6 +1067,7 @@ void setup() {
             snprintf(buf, sizeof(buf), "Kal: Sys=%d/3 Gyro=%d/3 Accel=%d/3 Mag=%d/3",
                      cal_sys, cal_gyro, cal_accel, cal_mag);
             lora_log(buf);
+            led_uygula(); // config blink (sistem_hazir=false -> 1 Hz)
             vTaskDelay(500 / portTICK_PERIOD_MS);
         }
         if (cal_sys >= BNO055_MIN_KALIBRASYON)
@@ -1098,6 +1104,9 @@ void setup() {
         snprintf(buf, sizeof(buf), "Referans Basinc (hPa): %.2f", referans_basinc);
         lora_log(buf);
     }
+
+    // Tum baslangic isleri bitti — LED'ler artik state machine'e gore (HAZIR = solid)
+    sistem_hazir = true;
 
     // FreeRTOS Kuyruk Başlatma (Maksimum 10 paketlik yer ayıralım)
     telemetryQueue = xQueueCreate(TELEMETRY_QUEUE_LEN, sizeof(TelemetryPacket));
