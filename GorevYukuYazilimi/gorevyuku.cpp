@@ -28,6 +28,7 @@
 #include <FS.h>
 #include "driver/uart.h"
 #include "esp_heap_caps.h"
+#include "led_durum_bgy.h"   // saf LED karar mantigi + beacon zamanlama sabitleri
 
 // ============================================================
 //  >>> YARISMA ALANI - LORA ADRES & KANAL AYARLARI <<<
@@ -67,6 +68,9 @@
 #define LORA_M1 2
 #define PIN_BUZZER 12   // Kurtarma beacon buzzer (main ile ayni)
 #define PIN_LED 13      // Kurtarma beacon LED (main ile ayni)
+#define PIN_LED_1 26    // Durum gosterge LED 1 (UKB ile ayni pin)
+#define PIN_LED_2 4     // Durum gosterge LED 2
+#define PIN_LED_3 25    // Durum gosterge LED 3
 
 // --- Haberlesme sabitleri ---
 #define BAUD_GPS               9600
@@ -91,8 +95,7 @@
 #define REST_IVME_ESIGI        1.5   // m/s^2 - |dogrusal ivme| bunun altinda = durgun (IMU)
 #define REST_GYRO_ESIGI        0.2   // rad/s - |gyro| bunun altinda = durgun (IMU)
 #define INIS_STABIL_SURE_MS   5000   // ms    - bu sure boyunca kesintisiz durgun -> "indi"
-#define BEACON_BIP_MS          200   // ms    - buzzer bip suresi
-#define BEACON_PERIYOT_MS     1000   // ms    - bip periyodu (BEACON_BIP_MS ot + kalani sus)
+// BEACON_BIP_MS / BEACON_PERIYOT_MS -> led_durum_bgy.h (LED flash + buzzer ayni fazdan senkron)
 
 // --- FreeRTOS sabitleri ---
 #define TASK_STACK_SIZE 10000
@@ -146,6 +149,9 @@ float max_irtifa = 0.0;
 bool  uctu = false;                 // gercekten ucti mi? (yerdeki yanlis tetigi onler)
 bool  indi = false;                 // indi mi? (latch — bulana kadar acik)
 unsigned long rest_baslangic = 0;   // durgunluk penceresi baslangici (0 = durgun degil)
+
+// setup() bitince true; false iken 3 durum LED'i config blink yapar
+volatile bool sistem_hazir = false;
 
 // Dikey hiz (baro turevi) — inis tespitindeki "baro sabit" kontrolu icin
 float onceki_irtifa = 0.0;
@@ -267,18 +273,24 @@ float hesapla_dikey_hiz(float guncel_irtifa) {
     return dh / dt;
 }
 
-// --- NON-BLOCKING KURTARMA BEACON ---
-// indi=true olunca LED sabit yanar, buzzer aralikli biper (BEACON_BIP_MS ot / kalani sus).
-// Her dongude cagrilir; indi degilse cikislar sondurulur.
+// --- NON-BLOCKING KURTARMA BEACON (yalniz BUZZER) ---
+// indi=true olunca buzzer aralikli biper; degilse susar.
+// LED'ler (beacon LED 13 dahil) artik led_uygula() tarafindan surulur; buzzer ile
+// ayni millis() fazindan beslendikleri icin dogal senkron flash olur.
 void beacon_guncelle() {
-    if (!indi) {
-        digitalWrite(PIN_LED, LOW);
-        digitalWrite(PIN_BUZZER, LOW);
-        return;
-    }
-    digitalWrite(PIN_LED, HIGH);   // latch: bulana kadar sabit yanar
+    if (!indi) { digitalWrite(PIN_BUZZER, LOW); return; }
     bool bip = (millis() % BEACON_PERIYOT_MS) < BEACON_BIP_MS;
     digitalWrite(PIN_BUZZER, bip ? HIGH : LOW);
+}
+
+// --- LED GOSTERGE SURUCUSU (tek merkez: 3 durum LED'i 26/4/25 + beacon LED 13) ---
+// Karar mantigi led_durum_bgy.h'deki saf fonksiyonda; burada sadece pinlere yazilir.
+void led_uygula() {
+    LedDurumBgy d = hesapla_led_durumu_bgy(sistem_hazir, uctu, indi, millis());
+    digitalWrite(PIN_LED_1, d.led1 ? HIGH : LOW);
+    digitalWrite(PIN_LED_2, d.led2 ? HIGH : LOW);
+    digitalWrite(PIN_LED_3, d.led3 ? HIGH : LOW);
+    digitalWrite(PIN_LED,   d.beacon ? HIGH : LOW);
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -333,8 +345,9 @@ void Task1code(void *pvParameters) {
         }
     }
 
-    // 2.7 Kurtarma beacon (non-blocking): indi olunca LED+buzzer
+    // 2.7 Kurtarma beacon (buzzer) + LED gostergeleri (durum makinesine gore)
     beacon_guncelle();
+    led_uygula();
 
     // 3. Paketle ve Core 1'e gonder
     GorevYukuPaket packet;
@@ -384,6 +397,14 @@ void setup() {
     pinMode(PIN_LED, OUTPUT);
     digitalWrite(PIN_BUZZER, LOW);
     digitalWrite(PIN_LED, LOW);
+
+    // Durum gosterge LED'leri (26/4/25) — baslangicta kapali
+    pinMode(PIN_LED_1, OUTPUT);
+    pinMode(PIN_LED_2, OUTPUT);
+    pinMode(PIN_LED_3, OUTPUT);
+    digitalWrite(PIN_LED_1, LOW);
+    digitalWrite(PIN_LED_2, LOW);
+    digitalWrite(PIN_LED_3, LOW);
 
     // 2. DMA bellek + protokoller
     sd_dma_buf_A = (char*)heap_caps_malloc(SD_DMA_BUF_SIZE, MALLOC_CAP_DMA);
@@ -446,6 +467,7 @@ void setup() {
     for (int i = 0; i < 20; i++) {
         basinc_toplam += bme.readPressure() / 100.0F; // Pa -> hPa
         vTaskDelay(50 / portTICK_PERIOD_MS);
+        led_uygula(); // config blink (sistem_hazir henuz false)
     }
     referans_basinc = basinc_toplam / 20.0;
     {
@@ -463,6 +485,9 @@ void setup() {
         bnoOk = false;
         lora_log("UYARI: BNO055 bulunamadi! Inis tespiti yalniz baro ile yapilacak.");
     }
+
+    // Tum baslangic isleri bitti -> LED'ler artik durum makinesine gore (bekliyor = solid)
+    sistem_hazir = true;
 
     // 7. Kuyruk
     telemetryQueue = xQueueCreate(TELEMETRY_QUEUE_LEN, sizeof(GorevYukuPaket));
