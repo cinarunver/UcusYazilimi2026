@@ -334,6 +334,7 @@ float gpsEnlem = 0.0, gpsBoylam = 0.0;
 #pragma pack(push, 1)
 struct TelemetryPacket {
     float ivmeX, ivmeY, ivmeZ;
+    float ivmeToplam; // Bileske ivme buyuklugu = sqrt(x^2+y^2+z^2) (core0'da hesaplanir)
     float gyroX, gyroY, gyroZ;
     float roll, pitch, yaw;
     float irtifa;
@@ -351,11 +352,12 @@ struct TelemetryPacket {
 // giderken bu packed int wire pakete quantize edilir (paket kucultme).
 // Little-endian. Yer istasyonu Python format: '<3hH3h2iB'.
 // Olcekler: ivme x100, aci x100, irtifa x10, hiz x10, GPS x1e7.
-// NOT: ivmeX/ivmeY ve gyroX/Y/Z havadan GONDERILMEZ (yer istasyoninda
-//      gosterilmiyor; SD karta tam float kaydediliyor). Hiz artisi (>10 Hz) icin.
+// NOT: ivmeX/ivmeY/ivmeZ ve gyroX/Y/Z tek tek havadan GONDERILMEZ; bunun yerine
+//      bileske (toplam) ivme buyuklugu tek int16 slot ile gider. Ham eksenler SD'de
+//      tam float kalir. Byte duzeni degismedi (hala int16) -> Python format aynen '<3hH3h2iB'.
 #pragma pack(push, 1)
 struct TelemetryWire {
-    int16_t  ivmeZ;                       // yalniz Z ekseni (kalkis/apogee gostergesi)
+    int16_t  ivmeToplam;                  // bileske ivme buyuklugu sqrt(x^2+y^2+z^2) (kalkis/g gostergesi)
     int16_t  roll, pitch;
     uint16_t yaw;
     int16_t  irtifa, dikeyHiz, eglimAcisi;
@@ -521,7 +523,7 @@ static inline int32_t q32(double v, double scale) {
 
 // TelemetryPacket (float) -> TelemetryWire (packed int)
 static inline void pack_telemetry_wire(TelemetryWire& w, const TelemetryPacket& p) {
-    w.ivmeZ = q16(p.ivmeZ, WIRE_OLCEK_IVME);  // ivmeX/ivmeY ve gyro havadan gitmez
+    w.ivmeToplam = q16(p.ivmeToplam, WIRE_OLCEK_IVME);  // bileske ivme; ham eksenler havadan gitmez
     w.roll  = q16(p.roll,  WIRE_OLCEK_ACI);
     w.pitch = q16(p.pitch, WIRE_OLCEK_ACI);
     w.yaw   = qu16(p.yaw,  WIRE_OLCEK_ACI);
@@ -867,6 +869,8 @@ void Task1code(void *pvParameters) {
     // --- STRUCT DOLDURMA VE CORE 1'E GÖNDERME ---
     TelemetryPacket packet;
     packet.ivmeX = ivmeX; packet.ivmeY = ivmeY; packet.ivmeZ = ivmeZ;
+    // Bileske (toplam) ivme buyuklugu — core0'da hesaplanir, havadan tek slot ile gider.
+    packet.ivmeToplam = sqrtf(ivmeX * ivmeX + ivmeY * ivmeY + ivmeZ * ivmeZ);
     packet.gyroX = gyroX; packet.gyroY = gyroY; packet.gyroZ = gyroZ;
     packet.roll = roll; packet.pitch = pitch; packet.yaw = yaw;
     packet.irtifa = irtifa;

@@ -1,11 +1,11 @@
 # Graph Report - UcusYazilimi2026  (2026-07-12)
 
 ## Corpus Check
-- 43 files · ~52,409 words
+- 43 files · ~52,347 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 827 nodes · 921 edges · 120 communities (52 shown, 68 thin omitted)
+- 828 nodes · 922 edges · 120 communities (52 shown, 68 thin omitted)
 - Extraction: 100% EXTRACTED · 0% INFERRED · 0% AMBIGUOUS · INFERRED: 4 edges (avg confidence: 0.8)
 - Token cost: 0 input · 0 output
 
@@ -140,8 +140,8 @@
 5. `TelemetryPacket` - 22 edges
 6. `TelemetryPacket` - 22 edges
 7. `GorevYukuPaket` - 19 edges
-8. `GorevYukuPaket` - 17 edges
-9. `TelemetryPacket` - 17 edges
+8. `TelemetryPacket` - 17 edges
+9. `GorevYukuPaket` - 16 edges
 10. `TelemetryPacket` - 16 edges
 
 ## Surprising Connections (you probably didn't know these)
@@ -192,8 +192,8 @@ Cohesion: 0.07
 Nodes (27): hesapla_dikey_hiz(), logMesaj(), setup(), SimpleKalmanFilter, err_estimate, err_measure, first_run, kalman_gain (+19 more)
 
 ### Community 8 - "Payload Firmware (GorevYuku)"
-Cohesion: 0.14
-Nodes (14): GorevYukuPaket, basinc, gpsBoylam, gpsEnlem, gyroX, gyroY, gyroZ, irtifa (+6 more)
+Cohesion: 0.15
+Nodes (13): GorevYukuPaket, basinc, gpsBoylam, gpsEnlem, gyroX, gyroY, gyroZ, irtifa (+5 more)
 
 ### Community 9 - "Flight Logic Unit Tests"
 Cohesion: 0.08
@@ -312,8 +312,8 @@ Cohesion: 0.24
 Nodes (11): beacon_guncelle(), hesapla_dikey_hiz(), led_uygula(), lora_konfigurasyon(), lora_log(), pack_gorevyuku_wire(), q16(), q32() (+3 more)
 
 ### Community 110 - "GorevYukuWire"
-Cohesion: 0.18
-Nodes (11): GorevYukuWire, basinc, gpsBoylam, gpsEnlem, gyroX, gyroY, gyroZ, irtifa (+3 more)
+Cohesion: 0.15
+Nodes (13): GorevYukuWire, basinc, gpsBoylam, gpsEnlem, gyroX, gyroY, gyroZ, irtifa (+5 more)
 
 ### Community 111 - "LoRa Paket Küçültme (Fixed-Point) — Tasarım"
 Cohesion: 0.17
@@ -352,7 +352,7 @@ Cohesion: 0.29
 Nodes (7): uart_port_t, crc16_ccitt(), gonder_paket_framed_dma(), pack_telemetry_wire(), q16(), q32(), qu16()
 
 ## Knowledge Gaps
-- **474 isolated node(s):** `err_measure`, `err_estimate`, `q`, `last_estimate`, `kalman_gain` (+469 more)
+- **475 isolated node(s):** `err_measure`, `err_estimate`, `q`, `last_estimate`, `kalman_gain` (+470 more)
   These have ≤1 connection - possible missing edges or undocumented components.
 - **68 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
@@ -366,7 +366,7 @@ _Questions this graph is uniquely positioned to answer:_
 - **Why does `TelemetryPacket` connect `Main Flight Firmware` to `gonder_paket_framed_dma`, `main.cpp`, `pack_telemetry_wire`?**
   _High betweenness centrality (0.004) - this node is a cross-community bridge._
 - **What connects `err_measure`, `err_estimate`, `q` to the rest of the system?**
-  _486 weakly-connected nodes found - possible documentation gaps or missing edges._
+  _487 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Debug Firmware (main_debug)` be split into smaller, more focused modules?**
   _Cohesion score 0.06033182503770739 - nodes in this community are weakly interconnected._
 - **Should `SIT/SUT Reference Firmware` be split into smaller, more focused modules?**

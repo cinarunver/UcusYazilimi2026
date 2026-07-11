@@ -164,16 +164,19 @@ struct GorevYukuPaket {
     float basinc, sicaklik, nem, irtifa;   // BME280 (basinc hPa)
     float gpsEnlem, gpsBoylam;             // GPS
     float ivmeX, ivmeY, ivmeZ;             // BNO055 lineer ivme (m/s^2)
+    float ivmeToplam;                      // bileske ivme = sqrt(x^2+y^2+z^2) (core0'da hesaplanir)
     float gyroX, gyroY, gyroZ;             // BNO055 gyro (rad/s)
-};  // 12 float = 48 byte
+};  // 13 float = 52 byte
 #pragma pack(pop)
 
-// --- HAVADAN GİDEN FIXED-POINT WIRE PAKET (28 byte) ---
-// GorevYukuPaket (float, 48B) yalniz queue + SD icin; LoRa'ya giderken bu
+// --- HAVADAN GİDEN FIXED-POINT WIRE PAKET (24 byte) ---
+// GorevYukuPaket (float, 52B) yalniz queue + SD icin; LoRa'ya giderken bu
 // packed int wire pakete quantize edilir (paket kucultme). Little-endian.
-// Yer istasyonu Python format: '<HhHh2i6h'.
+// Yer istasyonu Python format: '<HhHh2i4h'.
 // Olcekler: basinc hPa x10, sicaklik x100, nem x100, irtifa x10, GPS x1e7,
 //           ivme x100, gyro x10.
+// NOT: ivmeX/Y/Z tek tek havadan GONDERILMEZ; yerine bileske (toplam) ivme
+//      tek int16 slot ile gider (28B->24B). Ham 3 eksen SD'de tam float kalir.
 #pragma pack(push, 1)
 struct GorevYukuWire {
     uint16_t basinc;
@@ -181,7 +184,7 @@ struct GorevYukuWire {
     uint16_t nem;
     int16_t  irtifa;
     int32_t  gpsEnlem, gpsBoylam;
-    int16_t  ivmeX, ivmeY, ivmeZ;
+    int16_t  ivmeToplam;                    // bileske ivme buyuklugu sqrt(x^2+y^2+z^2)
     int16_t  gyroX, gyroY, gyroZ;
 };
 #pragma pack(pop)
@@ -244,9 +247,7 @@ static inline void pack_gorevyuku_wire(GorevYukuWire& w, const GorevYukuPaket& p
     w.irtifa   = q16(p.irtifa,    WIRE_OLCEK_IRTIFA);
     w.gpsEnlem  = q32(p.gpsEnlem,  WIRE_OLCEK_GPS);
     w.gpsBoylam = q32(p.gpsBoylam, WIRE_OLCEK_GPS);
-    w.ivmeX = q16(p.ivmeX, WIRE_OLCEK_IVME);
-    w.ivmeY = q16(p.ivmeY, WIRE_OLCEK_IVME);
-    w.ivmeZ = q16(p.ivmeZ, WIRE_OLCEK_IVME);
+    w.ivmeToplam = q16(p.ivmeToplam, WIRE_OLCEK_IVME);  // bileske ivme; ham eksenler havadan gitmez
     w.gyroX = q16(p.gyroX, WIRE_OLCEK_GYRO);
     w.gyroY = q16(p.gyroY, WIRE_OLCEK_GYRO);
     w.gyroZ = q16(p.gyroZ, WIRE_OLCEK_GYRO);
@@ -422,6 +423,8 @@ void Task1code(void *pvParameters) {
     packet.basinc = basinc; packet.sicaklik = sicaklik; packet.nem = nem; packet.irtifa = irtifa;
     packet.gpsEnlem = gpsEnlem; packet.gpsBoylam = gpsBoylam;
     packet.ivmeX = ivmeX; packet.ivmeY = ivmeY; packet.ivmeZ = ivmeZ;
+    // Bileske (toplam) ivme buyuklugu — core0'da hesaplanir, havadan tek slot ile gider.
+    packet.ivmeToplam = sqrtf(ivmeX * ivmeX + ivmeY * ivmeY + ivmeZ * ivmeZ);
     packet.gyroX = gyroX; packet.gyroY = gyroY; packet.gyroZ = gyroZ;
 
     xQueueSend(telemetryQueue, &packet, 0);
