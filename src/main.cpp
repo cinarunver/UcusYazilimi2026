@@ -141,21 +141,22 @@ float referans_basinc = 1013.25;
 #define UART_BUFFER_SIZE       1024  // TX buffer (Non-Blocking gönderim için)
 
 // --- ÇERÇEVE PROTOKOLü (Framed Binary) ---
-// Format: [0xAA][0x55][LEN:1B][TelemetryWire:33B][CRC16_HI:1B][CRC16_LO:1B] = 38B
+// Format: [0xAA][0x55][LEN:1B][TelemetryWire:23B][CRC16_HI:1B][CRC16_LO:1B] = 28B
 // Havadan fixed-point wire paket gider (paket kucultme); ic float paket 59B SD'de kalir.
 // CRC algoritması: CRC16-CCITT (poly=0x1021, init=0xFFFF)
 // Not: E32-433T30D kendi RF katmanında CRC/FEC yapıyor.
 //      Uygulama katmanı CRC'si UART hattını ve buffer kaymalarını korur.
 #define SYNC_BYTE_1          0xAA
 #define SYNC_BYTE_2          0x55
-// FRAME_SIZE: sizeof(TelemetryWire) + 2+1+2 = 38 byte
+// FRAME_SIZE: sizeof(TelemetryWire) + 2+1+2 = 28 byte
 
 // --- LORA GÖNDERİM HIZI ---
-// Fixed-point wire cerceve 38 byte @ 9600 baud, FEC acik hava tavani ~500-700 B/s.
-// Core 0 queue → 100 Hz; LoRa → her LORA_GONDERIM_ORANI pakette bir.
-// 100 Hz ÷ 8 ≈ 12.5 Hz → ~475 B/s (guvenli, >10 Hz). Saha testi temizse
-// 7 (~14 Hz) / 6 (~16.7 Hz) denenebilir (RF ayarina dokunmadan).
-#define LORA_GONDERIM_ORANI    8
+// Wire cerceve 28 byte @ 9600 baud. OLCULEN efektif hava tavani ~330 B/s
+// (FEC acik + preamble ek yuku). Task1 gercek dongu ~65 Hz (sensor I2C okuma
+// vTaskDelay(10)'in ustune biner, 100 degil). LoRa Hz = ~65 / ORANI.
+// ORANI=6 -> ~11 Hz x 28B = ~305 B/s (guvenli, >10 Hz, RF'e dokunmadan).
+// Not: ORANI=7 (38B iken) tavani asip CRC hatasi verdi -> paket 23B'ye indirildi.
+#define LORA_GONDERIM_ORANI    6
 
 // --- SİT/SUT TTL (UART0 / Serial) ---
 #define BAUD_TTL             115200   // UART0 — SİT/SUT komut alma (Ek-7 Tablo 7 zorunlu)
@@ -345,15 +346,16 @@ struct TelemetryPacket {
 };
 #pragma pack(pop)
 
-// --- HAVADAN GİDEN FIXED-POINT WIRE PAKET (33 byte) ---
+// --- HAVADAN GİDEN FIXED-POINT WIRE PAKET (23 byte) ---
 // TelemetryPacket (float, 59B) yalniz queue + SD icin kullanilir; LoRa'ya
 // giderken bu packed int wire pakete quantize edilir (paket kucultme).
-// Little-endian. Yer istasyonu Python format: '<8hH3h2iB'.
-// Olcekler: ivme x100, gyro x10, aci x100, irtifa x10, hiz x10, GPS x1e7.
+// Little-endian. Yer istasyonu Python format: '<3hH3h2iB'.
+// Olcekler: ivme x100, aci x100, irtifa x10, hiz x10, GPS x1e7.
+// NOT: ivmeX/ivmeY ve gyroX/Y/Z havadan GONDERILMEZ (yer istasyoninda
+//      gosterilmiyor; SD karta tam float kaydediliyor). Hiz artisi (>10 Hz) icin.
 #pragma pack(push, 1)
 struct TelemetryWire {
-    int16_t  ivmeX, ivmeY, ivmeZ;
-    int16_t  gyroX, gyroY, gyroZ;
+    int16_t  ivmeZ;                       // yalniz Z ekseni (kalkis/apogee gostergesi)
     int16_t  roll, pitch;
     uint16_t yaw;
     int16_t  irtifa, dikeyHiz, eglimAcisi;
@@ -519,12 +521,7 @@ static inline int32_t q32(double v, double scale) {
 
 // TelemetryPacket (float) -> TelemetryWire (packed int)
 static inline void pack_telemetry_wire(TelemetryWire& w, const TelemetryPacket& p) {
-    w.ivmeX = q16(p.ivmeX, WIRE_OLCEK_IVME);
-    w.ivmeY = q16(p.ivmeY, WIRE_OLCEK_IVME);
-    w.ivmeZ = q16(p.ivmeZ, WIRE_OLCEK_IVME);
-    w.gyroX = q16(p.gyroX, WIRE_OLCEK_GYRO);
-    w.gyroY = q16(p.gyroY, WIRE_OLCEK_GYRO);
-    w.gyroZ = q16(p.gyroZ, WIRE_OLCEK_GYRO);
+    w.ivmeZ = q16(p.ivmeZ, WIRE_OLCEK_IVME);  // ivmeX/ivmeY ve gyro havadan gitmez
     w.roll  = q16(p.roll,  WIRE_OLCEK_ACI);
     w.pitch = q16(p.pitch, WIRE_OLCEK_ACI);
     w.yaw   = qu16(p.yaw,  WIRE_OLCEK_ACI);
@@ -634,15 +631,15 @@ void sd_buffer_bosalt(File& file) {
 
 // --- ÇERÇEVELI PAKET GÖNDERME (DMA DESTEKLI UART) ---
 // Float paket fixed-point wire pakete quantize edilir, sonra cerçevelenir.
-// Cerçeve: [0xAA][0x55][LEN=33][TelemetryWire 33B][CRC16_HI][CRC16_LO] = 38B.
+// Cerçeve: [0xAA][0x55][LEN=23][TelemetryWire 23B][CRC16_HI][CRC16_LO] = 28B.
 void gonder_paket_framed_dma(uart_port_t uart_num, const TelemetryPacket& pkt) {
-    static uint8_t frame_buf[80]; // DMA uyumlu buffer; wire cerceve 38B, 80 fazlasiyla yeter
+    static uint8_t frame_buf[80]; // DMA uyumlu buffer; wire cerceve 28B, 80 fazlasiyla yeter
 
     TelemetryWire wire;
     pack_telemetry_wire(wire, pkt);
 
     const uint8_t* payload = (const uint8_t*)&wire;
-    const size_t   len     = sizeof(TelemetryWire);   // 33
+    const size_t   len     = sizeof(TelemetryWire);   // 23
     uint16_t       crc     = crc16_ccitt(payload, len);
 
     size_t idx = 0;
