@@ -152,7 +152,7 @@ float referans_basinc = 1013.25;
 // --- LORA GÖNDERİM HIZI ---
 // E32-433T30D @ 9600 baud, 64 byte/çerçeve → ~15 çerçeve/sn max
 // Core 0 queue → 100 Hz; LoRa → her LORA_GONDERIM_ORANI pakettte bir (≈10 Hz)
-#define LORA_GONDERIM_ORANI    1
+#define LORA_GONDERIM_ORANI    8
 
 // --- SİT/SUT TTL (UART0 / Serial) ---
 #define BAUD_TTL             115200   // UART0 — SİT/SUT komut alma (Ek-7 Tablo 7 zorunlu)
