@@ -141,18 +141,21 @@ float referans_basinc = 1013.25;
 #define UART_BUFFER_SIZE       1024  // TX buffer (Non-Blocking gönderim için)
 
 // --- ÇERÇEVE PROTOKOLü (Framed Binary) ---
-// Format: [0xAA][0x55][LEN:1B][TelemetryPacket:59B][CRC16_HI:1B][CRC16_LO:1B]
+// Format: [0xAA][0x55][LEN:1B][TelemetryWire:33B][CRC16_HI:1B][CRC16_LO:1B] = 38B
+// Havadan fixed-point wire paket gider (paket kucultme); ic float paket 59B SD'de kalir.
 // CRC algoritması: CRC16-CCITT (poly=0x1021, init=0xFFFF)
 // Not: E32-433T30D kendi RF katmanında CRC/FEC yapıyor.
 //      Uygulama katmanı CRC'si UART hattını ve buffer kaymalarını korur.
 #define SYNC_BYTE_1          0xAA
 #define SYNC_BYTE_2          0x55
-// FRAME_SIZE: struct sonrasında hesaplanır → sizeof(TelemetryPacket) + 2+1+2 = 64 byte
+// FRAME_SIZE: sizeof(TelemetryWire) + 2+1+2 = 38 byte
 
 // --- LORA GÖNDERİM HIZI ---
-// E32-433T30D @ 9600 baud, 64 byte/çerçeve → ~15 çerçeve/sn max
-// Core 0 queue → 100 Hz; LoRa → her LORA_GONDERIM_ORANI pakettte bir (≈10 Hz)
-#define LORA_GONDERIM_ORANI    10
+// Fixed-point wire cerceve 38 byte @ 9600 baud, FEC acik hava tavani ~500-700 B/s.
+// Core 0 queue → 100 Hz; LoRa → her LORA_GONDERIM_ORANI pakette bir.
+// 100 Hz ÷ 8 ≈ 12.5 Hz → ~475 B/s (guvenli, >10 Hz). Saha testi temizse
+// 7 (~14 Hz) / 6 (~16.7 Hz) denenebilir (RF ayarina dokunmadan).
+#define LORA_GONDERIM_ORANI    8
 
 // --- SİT/SUT TTL (UART0 / Serial) ---
 #define BAUD_TTL             115200   // UART0 — SİT/SUT komut alma (Ek-7 Tablo 7 zorunlu)
@@ -342,6 +345,23 @@ struct TelemetryPacket {
 };
 #pragma pack(pop)
 
+// --- HAVADAN GİDEN FIXED-POINT WIRE PAKET (33 byte) ---
+// TelemetryPacket (float, 59B) yalniz queue + SD icin kullanilir; LoRa'ya
+// giderken bu packed int wire pakete quantize edilir (paket kucultme).
+// Little-endian. Yer istasyonu Python format: '<8hH3h2iB'.
+// Olcekler: ivme x100, gyro x10, aci x100, irtifa x10, hiz x10, GPS x1e7.
+#pragma pack(push, 1)
+struct TelemetryWire {
+    int16_t  ivmeX, ivmeY, ivmeZ;
+    int16_t  gyroX, gyroY, gyroZ;
+    int16_t  roll, pitch;
+    uint16_t yaw;
+    int16_t  irtifa, dikeyHiz, eglimAcisi;
+    int32_t  gpsEnlem, gpsBoylam;
+    uint8_t  durum;   // bit0=ayrilma1, bit1=ayrilma2, bit2-4=ucus_durumu
+};
+#pragma pack(pop)
+
 // --- SİT TELEMETRİ PAKETİ (Tablo 3 — 36 byte) ---
 // [0xAB][İRTİFA:4B][BASINÇ:4B][İVME_X/Y/Z:4B×3][AÇI_X/Y/Z:4B×3][CHK:1B][0x0D][0x0A]
 #pragma pack(push, 1)
@@ -470,6 +490,54 @@ uint16_t crc16_ccitt(const uint8_t* data, size_t len) {
     return crc;
 }
 
+// --- FIXED-POINT QUANTIZE YARDIMCILARI (clamp + round; overflow yok) ---
+#define WIRE_OLCEK_IVME    100.0f   // m/s^2 x100
+#define WIRE_OLCEK_GYRO     10.0f   // dps   x10
+#define WIRE_OLCEK_ACI     100.0f   // derece x100
+#define WIRE_OLCEK_IRTIFA   10.0f   // m     x10
+#define WIRE_OLCEK_HIZ      10.0f   // m/s   x10
+#define WIRE_OLCEK_GPS      1e7     // derece x1e7 (int32)
+
+static inline int16_t q16(float v, float scale) {
+    float x = roundf(v * scale);
+    if (x >  32767.0f) x =  32767.0f;
+    if (x < -32768.0f) x = -32768.0f;
+    return (int16_t)x;
+}
+static inline uint16_t qu16(float v, float scale) {
+    float x = roundf(v * scale);
+    if (x > 65535.0f) x = 65535.0f;
+    if (x < 0.0f)     x = 0.0f;
+    return (uint16_t)x;
+}
+static inline int32_t q32(double v, double scale) {
+    double x = round(v * scale);
+    if (x >  2147483647.0) x =  2147483647.0;
+    if (x < -2147483648.0) x = -2147483648.0;
+    return (int32_t)x;
+}
+
+// TelemetryPacket (float) -> TelemetryWire (packed int)
+static inline void pack_telemetry_wire(TelemetryWire& w, const TelemetryPacket& p) {
+    w.ivmeX = q16(p.ivmeX, WIRE_OLCEK_IVME);
+    w.ivmeY = q16(p.ivmeY, WIRE_OLCEK_IVME);
+    w.ivmeZ = q16(p.ivmeZ, WIRE_OLCEK_IVME);
+    w.gyroX = q16(p.gyroX, WIRE_OLCEK_GYRO);
+    w.gyroY = q16(p.gyroY, WIRE_OLCEK_GYRO);
+    w.gyroZ = q16(p.gyroZ, WIRE_OLCEK_GYRO);
+    w.roll  = q16(p.roll,  WIRE_OLCEK_ACI);
+    w.pitch = q16(p.pitch, WIRE_OLCEK_ACI);
+    w.yaw   = qu16(p.yaw,  WIRE_OLCEK_ACI);
+    w.irtifa     = q16(p.irtifa,     WIRE_OLCEK_IRTIFA);
+    w.dikeyHiz   = q16(p.dikeyHiz,   WIRE_OLCEK_HIZ);
+    w.eglimAcisi = q16(p.eglimAcisi, WIRE_OLCEK_ACI);
+    w.gpsEnlem  = q32(p.gpsEnlem,  WIRE_OLCEK_GPS);
+    w.gpsBoylam = q32(p.gpsBoylam, WIRE_OLCEK_GPS);
+    w.durum = (p.ayrilma1_durum ? 0x01 : 0)
+            | (p.ayrilma2_durum ? 0x02 : 0)
+            | ((p.ucus_durumu & 0x07) << 2);
+}
+
 // FLOAT'i virgülden sonra 2 basamaga yuvarlar (Ek-7 s.7)
 static inline float yuvarla2(float v) {
     return roundf(v * 100.0f) / 100.0f;
@@ -565,11 +633,16 @@ void sd_buffer_bosalt(File& file) {
 }
 
 // --- ÇERÇEVELI PAKET GÖNDERME (DMA DESTEKLI UART) ---
+// Float paket fixed-point wire pakete quantize edilir, sonra cerçevelenir.
+// Cerçeve: [0xAA][0x55][LEN=33][TelemetryWire 33B][CRC16_HI][CRC16_LO] = 38B.
 void gonder_paket_framed_dma(uart_port_t uart_num, const TelemetryPacket& pkt) {
-    static uint8_t frame_buf[80]; // DMA uyumlu buffer (statik bellek genelde DMA erişimine uygundur)
-    
-    const uint8_t* payload = (const uint8_t*)&pkt;
-    const size_t   len     = sizeof(TelemetryPacket);
+    static uint8_t frame_buf[80]; // DMA uyumlu buffer; wire cerceve 38B, 80 fazlasiyla yeter
+
+    TelemetryWire wire;
+    pack_telemetry_wire(wire, pkt);
+
+    const uint8_t* payload = (const uint8_t*)&wire;
+    const size_t   len     = sizeof(TelemetryWire);   // 33
     uint16_t       crc     = crc16_ccitt(payload, len);
 
     size_t idx = 0;

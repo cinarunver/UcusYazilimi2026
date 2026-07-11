@@ -15,8 +15,8 @@
     "semantic_hash": ""
   },
   "GorevYukuYazilimi/gorevyuku.cpp": {
-    "mtime": 1783784616.0202956,
-    "ast_hash": "b9badd60822588fc22718091aae50f10",
+    "mtime": 1783791348.7484782,
+    "ast_hash": "7f172f56cfdc4c07c57f948ec8bfb26b",
     "semantic_hash": ""
   },
   "I2C_Test/i2c_test.cpp": {
@@ -75,8 +75,8 @@
     "semantic_hash": ""
   },
   "src/main.cpp": {
-    "mtime": 1783782433.219144,
-    "ast_hash": "b9f337db04f9a92484c4f89f73d26147",
+    "mtime": 1783791250.4392188,
+    "ast_hash": "b4f1f3ddaf567c8927157f0d33510028",
     "semantic_hash": ""
   },
   "test/test_ucus/test_main.cpp": {
@@ -202,6 +202,16 @@
   "docs/superpowers/specs/2026-07-11-led-durum-gostergesi-design.md": {
     "mtime": 1783776713.0701227,
     "ast_hash": "187c25aad9317b8bdee1e8e9b384c480",
+    "semantic_hash": ""
+  },
+  "docs/superpowers/plans/2026-07-11-lora-paket-kucultme-fixed-point.md": {
+    "mtime": 1783790803.8086648,
+    "ast_hash": "50d0425381fc761107533df3f114b930",
+    "semantic_hash": ""
+  },
+  "docs/superpowers/specs/2026-07-11-lora-paket-kucultme-fixed-point-design.md": {
+    "mtime": 1783790331.7433014,
+    "ast_hash": "177589d0827c73675fcbffc43b089640",
     "semantic_hash": ""
   }
 }
