@@ -15,7 +15,7 @@
     "semantic_hash": ""
   },
   "GorevYukuYazilimi/gorevyuku.cpp": {
-    "mtime": 1783791348.7484782,
+    "mtime": 1783792377.1038518,
     "ast_hash": "7f172f56cfdc4c07c57f948ec8bfb26b",
     "semantic_hash": ""
   },
@@ -75,8 +75,8 @@
     "semantic_hash": ""
   },
   "src/main.cpp": {
-    "mtime": 1783791250.4392188,
-    "ast_hash": "b4f1f3ddaf567c8927157f0d33510028",
+    "mtime": 1783794468.1876667,
+    "ast_hash": "541c7f7bd94fabe1894dc608426ce418",
     "semantic_hash": ""
   },
   "test/test_ucus/test_main.cpp": {

@@ -1,16 +1,16 @@
 # Graph Report - UcusYazilimi2026  (2026-07-11)
 
 ## Corpus Check
-- 43 files · ~52,274 words
+- 43 files · ~52,292 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 832 nodes · 926 edges · 120 communities (52 shown, 68 thin omitted)
+- 827 nodes · 921 edges · 120 communities (52 shown, 68 thin omitted)
 - Extraction: 100% EXTRACTED · 0% INFERRED · 0% AMBIGUOUS · INFERRED: 4 edges (avg confidence: 0.8)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `18c10b24`
+- Built from commit: `7dadc31c`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -141,8 +141,8 @@
 6. `TelemetryPacket` - 21 edges
 7. `GorevYukuPaket` - 19 edges
 8. `TelemetryPacket` - 17 edges
-9. `TelemetryWire` - 17 edges
-10. `GorevYukuPaket` - 16 edges
+9. `GorevYukuPaket` - 16 edges
+10. `TelemetryPacket` - 16 edges
 
 ## Surprising Connections (you probably didn't know these)
 - `main()` --calls--> `hesapla_led_durumu()`  [INFERRED]
@@ -304,8 +304,8 @@ Cohesion: 0.29
 Nodes (6): Donanım / SUT Doğrulama (manuel — commit sonrası), Global Constraints, LED Durum Göstergesi Implementation Plan, Notlar, Task 1: Saf LED karar fonksiyonu + host birim testi, Task 2: `main.cpp` entegrasyonu (led_uygula, sistem_hazir, LED yazımlarını merkezleştirme)
 
 ### Community 108 - "TelemetryWire"
-Cohesion: 0.12
-Nodes (16): TelemetryWire, dikeyHiz, durum, eglimAcisi, gpsBoylam, gpsEnlem, gyroX, gyroY (+8 more)
+Cohesion: 0.18
+Nodes (11): TelemetryWire, dikeyHiz, durum, eglimAcisi, gpsBoylam, gpsEnlem, irtifa, ivmeZ (+3 more)
 
 ### Community 109 - "gorevyuku.cpp"
 Cohesion: 0.24
@@ -352,7 +352,7 @@ Cohesion: 0.29
 Nodes (7): uart_port_t, crc16_ccitt(), gonder_paket_framed_dma(), pack_telemetry_wire(), q16(), q32(), qu16()
 
 ## Knowledge Gaps
-- **479 isolated node(s):** `err_measure`, `err_estimate`, `q`, `last_estimate`, `kalman_gain` (+474 more)
+- **474 isolated node(s):** `err_measure`, `err_estimate`, `q`, `last_estimate`, `kalman_gain` (+469 more)
   These have ≤1 connection - possible missing edges or undocumented components.
 - **68 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
@@ -363,13 +363,13 @@ _Questions this graph is uniquely positioned to answer:_
   _High betweenness centrality (0.007) - this node is a cross-community bridge._
 - **Why does `DebugSnapshot` connect `DebugSnapshot Payload Sensors` to `Payload Debug Firmware`?**
   _High betweenness centrality (0.006) - this node is a cross-community bridge._
-- **Why does `TelemetryPacket` connect `Main Flight Firmware` to `gonder_paket_framed_dma`, `main.cpp`, `pack_telemetry_wire`?**
-  _High betweenness centrality (0.004) - this node is a cross-community bridge._
 - **What connects `err_measure`, `err_estimate`, `q` to the rest of the system?**
-  _491 weakly-connected nodes found - possible documentation gaps or missing edges._
+  _486 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Debug Firmware (main_debug)` be split into smaller, more focused modules?**
   _Cohesion score 0.06033182503770739 - nodes in this community are weakly interconnected._
 - **Should `SIT/SUT Reference Firmware` be split into smaller, more focused modules?**
   _Cohesion score 0.09523809523809523 - nodes in this community are weakly interconnected._
 - **Should `Main Flight Firmware` be split into smaller, more focused modules?**
   _Cohesion score 0.1111111111111111 - nodes in this community are weakly interconnected._
+- **Should `Payload Debug Firmware` be split into smaller, more focused modules?**
+  _Cohesion score 0.07293868921775898 - nodes in this community are weakly interconnected._
