@@ -323,7 +323,7 @@ void sd_buffer_bosalt(File& file) {
 
 // --- CERCEVELI PAKET GONDERME (DMA DESTEKLI UART) ---
 // Float paket fixed-point wire pakete quantize edilir, sonra cerçevelenir.
-// Cerçeve: [0xAA][0x55][LEN=28][GorevYukuWire 28B][CRC16_HI][CRC16_LO] = 33B.
+// Cerçeve: [0xAA][0x55][LEN=24][GorevYukuWire 24B][CRC16_HI][CRC16_LO] = 29B.
 void gonder_paket_framed_dma(uart_port_t uart_num, const GorevYukuPaket& pkt) {
     static uint8_t frame_buf[64];
 

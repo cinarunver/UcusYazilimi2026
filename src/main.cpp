@@ -941,11 +941,12 @@ void Task1code(void *pvParameters) {
 // ─────────────────────────────────────────────────────────────────────────────
 // GÖREVİ: Core 0'dan gelen TelemetryPacket'i çerçeveleyip LoRa ve SD'ye gönderir.
 //
-// LoRa (UART1 / Serial1) → E32-433T30D modülü     @   9600 baud  → Her 10. paket (~10 Hz)
+// LoRa (UART1 / Serial1) → E32-433T30D modülü     @   9600 baud  → Her LORA_GONDERIM_ORANI. paket (~11 Hz)
 // SD Kart                 → Kara kutu loglama      @ CSV format   → HER paket (~100 Hz)
 //
-// ÇERÇEVE FORMATI (64 byte/paket):
-//   [0xAA][0x55][LEN=59][...TelemetryPacket 59B...][CRC16_HI][CRC16_LO]
+// ÇERÇEVE FORMATI (28 byte/paket) — havadan fixed-point wire gider:
+//   [0xAA][0x55][LEN=23][...TelemetryWire 23B...][CRC16_HI][CRC16_LO]
+//   (SD'ye ise tam float TelemetryPacket CSV olarak yazilir)
 //
 // CRC16-CCITT: UART hattında bit flip / buffer kayması tespiti.
 // E32-433T30D zaten RF katmanında CRC/FEC yapıyor; bu uygulama katmanı CRC'si.
