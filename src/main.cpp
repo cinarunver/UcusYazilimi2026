@@ -169,7 +169,7 @@ float referans_basinc = 1013.25;
 #define PIN_TTL_TX 3
 #define PIN_LED_2 4
 #define PIN_SPI_CS 5
-#define PIN_FUNYE_2 13
+#define PIN_FUNYE_2 14
 #define PIN_GPS_RX 17
 #define PIN_GPS_TX 16
 #define PIN_SPI_CLK 18
@@ -179,7 +179,7 @@ float referans_basinc = 1013.25;
 #define PIN_SPI_MOSI 23
 #define PIN_LED_3 25
 #define PIN_LED_1 26
-#define PIN_FUNYE_1 12
+#define PIN_FUNYE_1 27
 #define PIN_LORA_TX 33   // ESP TX -> LoRa DIN (modulun RXD'si)
 #define PIN_LORA_RX 32   // ESP RX <- LoRa DOUT (modulun TXD'si)
 #define PIN_SDKART_DET 35
@@ -287,6 +287,12 @@ float referans_basinc = 1013.25;
 // MAX_EGLIM aynen gecerlidir — asagidaki secim gercek ucus yolunu DEGISTIRMEZ.
 // SUT'un apogee'yi gecmesi, gercek ucusta da gececegi ANLAMINA GELMEZ.
 #define SUT_MAX_EGLIM        180.0  // derece - SUT'ta egim kapisi devre disi
+// --- SUT'A OZEL 2. AYRILMA IRTIFASI (YALNIZ MOD_SUT) ---
+// SUT senaryosunun sentetik yorungesi gercek ucus profiliyle ayni degildir;
+// 2. ayrilmanin test icinde tetiklendigini gormek icin esik ayri tutulur.
+// DIKKAT: Gercek ucusta (MOD_BEKLEME) ve SIT'te AYRILMA2_MESAFE (550 m) aynen
+// gecerlidir — asagidaki secim GERCEK UCUS YOLUNU DEGISTIRMEZ.
+#define SUT_AYRILMA2_MESAFE  480.0  // m     - SUT'ta ana parasut acilma irtifasi
 #define MIN_DIKEY_HIZ          0.0  // m/s   - Bu değerin altı (negatif) = düşüyor (BME280)
 #define KALKIS_IVME_ESIGI     20.0  // m/s²  - Z ekseninde bu ivmenin üstü = kalkış (BNO055)
 #define INIS_HIZ_ESIGI         2.0  // m/s   - Bu değerin altı = yerde sayılır
@@ -932,13 +938,17 @@ void Task1code(void *pvParameters) {
             }
             break;
 
-        case INIS_1:
+        case INIS_1: {
             // Alçak irtifaya inildiğinde ana paraşütü aç → 2. Ayrılma
-            if ((irtifa < AYRILMA2_MESAFE) && (max_irtifa_degeri > AYRILMA2_MESAFE)) {
+            // SUT'ta esik SUT_AYRILMA2_MESAFE'dir; gercek ucus 550 m'de kalir.
+            const float ayrilma2_kapisi =
+                (sitSutMod == MOD_SUT) ? SUT_AYRILMA2_MESAFE : AYRILMA2_MESAFE;
+            if ((irtifa < ayrilma2_kapisi) && (max_irtifa_degeri > ayrilma2_kapisi)) {
                 Funye2Atesle(); // Ana paraşüt
                 durum = INIS_2;
             }
             break;
+        }
 
         case INIS_2:
             // Yere iniş tespiti: hız sıfıra yakın + çok alçakta
@@ -973,9 +983,15 @@ void Task1code(void *pvParameters) {
         (max_irtifa_degeri - irtifa > APOGEE_IRTIFA_FARKI)) durum_bitleri |= ST_BIT_ALCALMA;
     if (ayrilma1)                                      durum_bitleri |= ST_BIT_DROGUE_EMIR;
     // bit6: GOZLEM — belirlenen irtifanin altina indi. max_irtifa kapisi, rampada
-    // (irtifa=0 < 550) bitin yanmasini onler; durum makinesine bagli DEGIL.
-    if ((max_irtifa_degeri > AYRILMA2_MESAFE) &&
-        (irtifa < AYRILMA2_MESAFE))                    durum_bitleri |= ST_BIT_ANA_IRTIFA;
+    // (irtifa=0 < esik) bitin yanmasini onler; durum makinesine bagli DEGIL.
+    // Esik INIS_1'deki ateşleme kapisiyla AYNI olmali, yoksa SUT'ta funye
+    // ateslenirken bit6 yanmaz (veya tersi) ve yer istasyonu tutarsiz gorur.
+    {
+    const float ana_irtifa_kapisi =
+        (sitSutMod == MOD_SUT) ? SUT_AYRILMA2_MESAFE : AYRILMA2_MESAFE;
+    if ((max_irtifa_degeri > ana_irtifa_kapisi) &&
+        (irtifa < ana_irtifa_kapisi))                  durum_bitleri |= ST_BIT_ANA_IRTIFA;
+    }
     if (ayrilma2)                                      durum_bitleri |= ST_BIT_ANA_EMIR;
 
     // --- MAKSİMUM HIZLI TTL GÖNDERİM (SIT/SUT) ---
