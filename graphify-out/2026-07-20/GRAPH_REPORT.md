@@ -1,11 +1,11 @@
 # Graph Report - UcusYazilimi2026  (2026-07-20)
 
 ## Corpus Check
-- 39 files · ~53,288 words
+- 39 files · ~52,436 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 830 nodes · 936 edges · 117 communities (49 shown, 68 thin omitted)
+- 826 nodes · 923 edges · 117 communities (49 shown, 68 thin omitted)
 - Extraction: 100% EXTRACTED · 0% INFERRED · 0% AMBIGUOUS
 - Token cost: 0 input · 0 output
 
@@ -160,11 +160,11 @@
 
 ### Community 0 - "Debug Firmware (main_debug)"
 Cohesion: 0.06
-Nodes (50): bufferla_ve_yaz_sd(), build_framed(), File, uart_port_t, crc16_ccitt(), dbg_append(), durum_adi(), Funye1Atesle() (+42 more)
+Nodes (48): bufferla_ve_yaz_sd(), build_framed(), File, uart_port_t, crc16_ccitt(), dbg_append(), durum_adi(), Funye1Atesle() (+40 more)
 
 ### Community 1 - "SIT/SUT Reference Firmware"
-Cohesion: 0.06
-Nodes (48): HardwareSerial, Print, be32_to_float(), crc16_ccitt(), csv_alan(), float_to_be32(), Funye1Atesle(), Funye2Atesle() (+40 more)
+Cohesion: 0.05
+Nodes (45): HardwareSerial, Print, be32_to_float(), crc16_ccitt(), csv_alan(), float_to_be32(), Funye1Atesle(), Funye2Atesle() (+37 more)
 
 ### Community 2 - "Main Flight Firmware"
 Cohesion: 0.11
@@ -355,8 +355,8 @@ _Questions this graph is uniquely positioned to answer:_
 - **What connects `err_measure`, `err_estimate`, `q` to the rest of the system?**
   _493 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Debug Firmware (main_debug)` be split into smaller, more focused modules?**
-  _Cohesion score 0.06009783368273934 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.06033182503770739 - nodes in this community are weakly interconnected._
 - **Should `SIT/SUT Reference Firmware` be split into smaller, more focused modules?**
-  _Cohesion score 0.05505279034690799 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.053877551020408164 - nodes in this community are weakly interconnected._
 - **Should `Main Flight Firmware` be split into smaller, more focused modules?**
   _Cohesion score 0.10526315789473684 - nodes in this community are weakly interconnected._

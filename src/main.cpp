@@ -83,18 +83,23 @@ static inline LedDurum hesapla_led_durumu(bool normal_mod, bool sistem_hazir,
 
 /*
 ================================================================================
-  NOT: KALMAN İRTİFA AYARI (kf_irtifa = 16.3, 264, 0.1112)
+  NOT: KALMAN İRTİFA AYARI (kf_irtifa = 1.5, 1.5, 0.1)
 ================================================================================
-  e_mea=16.3 olculen BME irtifa gurultusune gore secildi (eski: 1.5).
-  e_est=264 sadece baslangic, birkac ornekte kendini duzeltir (onemsiz).
-  ORAN e_mea/q ≈ 148 (eski ~15) -> COK daha agir yumusatma = irtifada LAG.
-  Etki: irtifa filtreli sinyali gercegin ~0.1-0.4 sn gerisinden takip eder.
-  APOGEE'ye etkisi (gecikme yonunde!):
-    - Tasarimsal 15m esigi zaten ~1.75 sn geciktiriyor (filtreyle ilgisiz).
-    - Filtre lag'i bunun UZERINE ~0.1-0.4 sn / ~1-6 m ekler.
-    - Toplam: drogue apogee'nin ~16-21 m altinda, tepeden ~1.8-2.2 sn sonra.
-  YAPILACAK: SUT (3000m cik-dus senaryosu) ile apogee gecikmesini olc.
-  Fazla gelirse q'yu 0.11->0.3 yap (lag ~yariya iner, gurultu biraz artar).
+  DIKKAT — e_mea'yi buyutmek "daha cok yumusatma" DEMEK DEGIL, filtreyi OLDURUR.
+  Bu filtrede kazanc K = err_est/(err_est + e_mea). err_est her adimda (1-K) ile
+  kuculuyor ve yalnizca q*|degisim| kadar geri besleniyor. Roket rampada
+  dururken |degisim| ~ 0 oldugundan err_est cokuyor ve K -> 0 kaliyor.
+  Yani e_mea gercek BME gurultusunden COK buyukse filtre son degerine DONAR.
+
+  Gecmis hata (commit 128a757, geri alindi): e_mea 1.5 -> 16.3 yapildi.
+  Gercek BME280 irtifa gurultusu ~0.2 m RMS, yani 16.3 ~80 kat buyuktu.
+  Sonuc: K ~ 0.002 -> irtifa -0.1'de dondu, dikey hiz da 0 kaldi
+  (irtifa sabit -> delta_irtifa = 0). APOGEE HIC TETIKLENMEZDI = PARASUT ACILMAZ.
+
+  e_mea'yi degistirmeden ONCE gercek gurultuyu OLC (roket sabitken ~30 sn
+  readAltitude() RMS'i). Kural: e_mea ~ olculen RMS, q ~ 1.5*e_mea civari.
+  Dogrulama: sensoru elle 2 m kaldir; filtre birkac sn icinde 2 m'yi gostermeli.
+  Gostermiyorsa K cokmustur — e_mea'yi kucult.
 ================================================================================
   YAPILACAKLAR LİSTESİ (TODO & MİMARİ PLAN)
 ================================================================================
@@ -164,9 +169,7 @@ float referans_basinc = 1013.25;
 #define PIN_TTL_TX 3
 #define PIN_LED_2 4
 #define PIN_SPI_CS 5
-#define PIN_BUZZER 12
-#define PIN_LED 13
-#define PIN_FUNYE_2 14
+#define PIN_FUNYE_2 13
 #define PIN_GPS_RX 17
 #define PIN_GPS_TX 16
 #define PIN_SPI_CLK 18
@@ -176,7 +179,7 @@ float referans_basinc = 1013.25;
 #define PIN_SPI_MOSI 23
 #define PIN_LED_3 25
 #define PIN_LED_1 26
-#define PIN_FUNYE_1 27
+#define PIN_FUNYE_1 12
 #define PIN_LORA_TX 33   // ESP TX -> LoRa DIN (modulun RXD'si)
 #define PIN_LORA_RX 32   // ESP RX <- LoRa DOUT (modulun TXD'si)
 #define PIN_SDKART_DET 35
@@ -230,7 +233,9 @@ float referans_basinc = 1013.25;
 
 // --- ORTAK ZAMANLAMA (Ek-7) ---
 #define TEST_AKTIVASYON_GECIKME_MS  1000  // Komut onayindan sonra modun aktif olma gecikmesi
-#define SITSUT_GONDERIM_PERIYOT_MS   100  // SİT telemetri + SUT durum paketi periyodu = 10 Hz
+// NOT: Eski 10 Hz periyot kapisi kaldirildi — SIT/SUT artik HER Task1 dongusunde
+//      gonderiliyor (max hiz, ~65-100 Hz). Bu define ARTIK KULLANILMIYOR, referans icin duruyor.
+#define SITSUT_GONDERIM_PERIYOT_MS   100  // (kullanilmiyor) eski SİT/SUT gonderim periyodu = 10 Hz
 #define SITSUT_FRAME_TIMEOUT_MS      100  // Yarim kalan cerceve icin parser sifirlama suresi
 
 // --- SUT DURUM BİLGİLENDİRME PAKETİ (Tablo 5 & 6) ---
@@ -245,14 +250,19 @@ float referans_basinc = 1013.25;
 #define ST_BIT_ANA_EMIR      (1u << 7)
 
 #define DURUM_MIN_IRTIFA_ESIGI  100.0  // m      - Bit 2 esigi
-#define DURUM_ACI_ESIGI          45.0  // derece - Bit 3 esigi
+#define DURUM_ACI_ESIGI          45.0  // derece - Bit 3 esigi (aci kriteri)
+// [ TODO ] Bit 3'un ikinci kriteri (Tablo 5: "... yatay eksen ivmesi ... den fazla").
+//          Asagidaki 30.0 SECILMIS BIR PLACEHOLDER'dir, sartnameden/rapordan
+//          gelen gercek deger ile DEGISTIRILMELI. BNO055 VECTOR_LINEARACCEL
+//          yercekimi telafili: normal dikey ucusta yatay bileske ~0-2 m/s^2.
+#define DURUM_YATAY_IVME_ESIGI   30.0  // m/s^2 - Bit 3 esigi (yatay ivme kriteri)
 #define MOTOR_YANMA_SURE_MS      3000  // ms     - Bit 1: kalkistan sonra motor yanma onlem suresi
 
 // --- SUT TEZGAH TESTI: FÜNYE YERINE LED (GÜVENLİK) ---
 // 1 = SUT modunda gercek fünye pinini SÜRME, sadece gosterge LED yak (tezgah — GÜVENLİ)
 // 0 = SUT'ta gercek fünyeyi de atesle (Aksaray GERÇEK test cihazi olcumu icin)
 //   NOT: SİT ve gercek ucusta bu bayraktan bagimsiz olarak fünye normal calisir.
-#define SUT_FUNYE_YERINE_LED   1
+#define SUT_FUNYE_YERINE_LED   0
 #define PIN_LED_DROGUE   PIN_LED_1   // GPIO26 — 1. ayrilma (drogue) gostergesi
 #define PIN_LED_ANA      PIN_LED_2   // GPIO4  — 2. ayrilma (ana parasut) gostergesi
 
@@ -266,6 +276,17 @@ float referans_basinc = 1013.25;
 #define APOGEE_IRTIFA_FARKI   15.0  // m     - Max irtifadan bu kadar düşünce apogee sayılır (BME280)
 #define AYRILMA2_MESAFE      550.0  // m     - Bu irtifanın altında ana paraşüt açılır
 #define MAX_EGLIM             10.0  // derece - Bu açıdan fazla eğimde apogee sayılmaz (güvenlik)
+// --- SUT'A OZEL EGIM KAPISI (YALNIZ MOD_SUT) ---
+// SUT'ta yonelim (roll/pitch) yer istasyonundan gelen SENTETIK bir degerdir ve
+// yorungeyle fiziksel olarak tutarli olmak zorunda degildir (kendi test
+// script'imiz sabit pitch=roll=0 gonderir). Tutarsiz veriye guvenlik kapisi
+// dayamak anlamsiz oldugundan SUT'ta kapi fiilen devre disi birakilir.
+// 180 derece = acos() ust siniri, yani kapi her zaman gecer.
+//
+// DIKKAT: Bu YALNIZCA MOD_SUT icindir. Gercek ucusta (MOD_BEKLEME) ve SIT'te
+// MAX_EGLIM aynen gecerlidir — asagidaki secim gercek ucus yolunu DEGISTIRMEZ.
+// SUT'un apogee'yi gecmesi, gercek ucusta da gececegi ANLAMINA GELMEZ.
+#define SUT_MAX_EGLIM        180.0  // derece - SUT'ta egim kapisi devre disi
 #define MIN_DIKEY_HIZ          0.0  // m/s   - Bu değerin altı (negatif) = düşüyor (BME280)
 #define KALKIS_IVME_ESIGI     20.0  // m/s²  - Z ekseninde bu ivmenin üstü = kalkış (BNO055)
 #define INIS_HIZ_ESIGI         2.0  // m/s   - Bu değerin altı = yerde sayılır
@@ -355,7 +376,7 @@ SimpleKalmanFilter kf_pitch(2.906, 9.982, 0.3884);
 SimpleKalmanFilter kf_yaw(2.906, 9.982, 0.3884);
 
 // Sadece irtifa filtreleniyor (basinc/sicaklik/nem okunmuyor)
-SimpleKalmanFilter kf_irtifa(16.3, 264, 0.1112); // olculen BME irtifa gurultusune gore (e_mea, e_est, q)
+SimpleKalmanFilter kf_irtifa(1.5, 1.5, 0.1); // (e_mea, e_est, q) — bkz. yukaridaki KALMAN IRTIFA AYARI notu
 
 // --- SENSÖR NESNELERİ ---
 Adafruit_BNO055 bno = Adafruit_BNO055(BNO055_DEF, BNO055_ADDR); 
@@ -445,18 +466,53 @@ volatile int active_sd_buf = 0; // 0: A, 1: B
 volatile int sd_buf_idx = 0;
 
 QueueHandle_t telemetryQueue;
+// SD kart log dosya adi — bu karta ozel (2. UKB kartina basarken ukb_2 yap)
+#define LOG_DOSYA_ADI "/ukb_1.csv"
 File logFile;
 bool sdOk = false;
 
 // Hazır Kullanılacak Metodlar/Fonksiyonlar
 
-// Non-Blocking fünye ateşleme: Pini HIGH yapar, zamanı kaydeder.
-// 400ms sonra funye_guncelle() otomatik kapatır.
+// ============================================================================
+//  *** FUNYE PIN GUVENLIGI — BU BLOK ASLA VE ASLA DEGISTIRILMEYECEK ***
+// ============================================================================
+// KURAL: Funye pinleri setup()'ta OUTPUT YAPILMAZ. Normalde high-Z (INPUT)
+// olarak durur; gate'i harici pull-down GND'ye kilitler. Pin OUTPUT'a YALNIZCA
+// funye_pin_ates() icinde, ateslemeden hemen once gecer; FUNYE_SURE_MS dolunca
+// funye_pin_serbest() ile tekrar high-Z'ye birakilir.
+//
+// NEDEN (dokunmadan once oku):
+//  1) Boot/reset sirasinda ESP32 pinleri high-Z'dir. setup()'ta OUTPUT yapmak
+//     pini surulur hale getirir; o andan itibaren tek bir hatali digitalWrite
+//     (bozuk bellek, stack tasmasi, kacak task, brown-out sonrasi yarim reset)
+//     gercek funyeyi ateslemeye yeter.
+//  2) High-Z'de MOSFET gate'ini pull-down direnci tutar — yazilim ne yaparsa
+//     yapsin fiziksel olarak akim akmaz. Yazilim hatasi, donanim guvenligini
+//     asamaz. Bu tek katmanli degil, cift katmanli koruma demek.
+//  3) "Temizlik olsun" diye setup'a pinMode(PIN_FUNYE_x, OUTPUT) EKLEME —
+//     bu, yukaridaki korumanin tamamini iptal eder.
+//
+// Sirayi da bozma: once digitalWrite(LOW), sonra pinMode. Ters sira,
+// OUTPUT'a gecis aninda registerde kalmis eski HIGH'i pine basar (glitch).
+// ============================================================================
+static inline void funye_pin_serbest(uint8_t pin) {
+    digitalWrite(pin, LOW);      // cikis registerini once temizle
+    pinMode(pin, INPUT);         // high-Z — surucu tamamen devre disi
+}
+
+static inline void funye_pin_ates(uint8_t pin) {
+    digitalWrite(pin, LOW);      // OUTPUT'a gecerken glitch olmasin
+    pinMode(pin, OUTPUT | PULLDOWN);
+    digitalWrite(pin, HIGH);
+}
+
+// Non-Blocking fünye ateşleme: Pini OUTPUT+HIGH yapar, zamanı kaydeder.
+// 400ms sonra funye_guncelle() otomatik kapatır ve pini high-Z'ye birakir.
 void Funye1Atesle(){
     if (!funye1_aktif) {
         // SUT tezgah testinde (bayrak 1) gercek fünyeyi ATESLEME — sadece LED.
         if (!(SUT_FUNYE_YERINE_LED && sitSutMod == MOD_SUT)) {
-            digitalWrite(PIN_FUNYE_1, HIGH);
+            funye_pin_ates(PIN_FUNYE_1);
         }
         funye1_baslangic = millis();
         funye1_aktif = true;
@@ -467,7 +523,7 @@ void Funye1Atesle(){
 void Funye2Atesle(){
     if (!funye2_aktif) {
         if (!(SUT_FUNYE_YERINE_LED && sitSutMod == MOD_SUT)) {
-            digitalWrite(PIN_FUNYE_2, HIGH);
+            funye_pin_ates(PIN_FUNYE_2);
         }
         funye2_baslangic = millis();
         funye2_aktif = true;
@@ -478,11 +534,11 @@ void Funye2Atesle(){
 // Her döngüde çağrılmalı — süresi dolan fünyeyi kapatır
 void funye_guncelle() {
     if (funye1_aktif && (millis() - funye1_baslangic >= FUNYE_SURE_MS)) {
-        digitalWrite(PIN_FUNYE_1, LOW);
+        funye_pin_serbest(PIN_FUNYE_1);
         funye1_aktif = false;
     }
     if (funye2_aktif && (millis() - funye2_baslangic >= FUNYE_SURE_MS)) {
-        digitalWrite(PIN_FUNYE_2, LOW);
+        funye_pin_serbest(PIN_FUNYE_2);
         funye2_aktif = false;
     }
 }
@@ -767,8 +823,8 @@ void Task1code(void *pvParameters) {
         anlik_dikey_hiz   = 0.0;
         funye1_aktif = false;
         funye2_aktif = false;
-        digitalWrite(PIN_FUNYE_1, LOW);
-        digitalWrite(PIN_FUNYE_2, LOW);
+        funye_pin_serbest(PIN_FUNYE_1);
+        funye_pin_serbest(PIN_FUNYE_2);
         onceki_mod = simdiki_mod;
     }
 
@@ -860,14 +916,19 @@ void Task1code(void *pvParameters) {
             // [GÜVENLİK KAPISI - BNO055 - 1 Koşul]
             //   Kriter D: Eğilm açısı < 10° (roket tümbling yapmıyor)
             //   Bu apogee algılaması değil, yanlış pozisyonda ateşlemeyi engeller.
+            //   SUT'ta bu kapi devre disidir (bkz. SUT_MAX_EGLIM) — sentetik
+            //   yonelim verisi guvenilir degil. GERCEK UCUS YOLU DEGISMEDI.
             //
             // TÜM KOŞULLAR sağlanırsa Fünye1 ateşlenir.
             // ================================================================
+            {
+            const float egim_kapisi = (sitSutMod == MOD_SUT) ? SUT_MAX_EGLIM : MAX_EGLIM;
             if ((max_irtifa_degeri - irtifa > APOGEE_IRTIFA_FARKI) &&  // [BME280] A
                 (anlik_dikey_hiz < MIN_DIKEY_HIZ) &&                   // [BME280] B
-                (eglim_acisi < MAX_EGLIM)) {                           // [BNO055] D - Güvenlik
+                (eglim_acisi < egim_kapisi)) {                         // [BNO055] D - Güvenlik
                 Funye1Atesle(); // Drogue paraşüt → 1. Ayrılma
                 durum = INIS_1;
+            }
             }
             break;
 
@@ -892,26 +953,42 @@ void Task1code(void *pvParameters) {
     }
 
     // --- SUT DURUM BİTLERİ (Tablo 5, latch) ---
+    // Tablo 5 iki tur bit tanimlar; ikisini KARISTIRMA:
+    //   GOZLEM (bit 0,2,3,4,6) = roketin fiziksel olarak ne yaptigi.
+    //   EMIR   (bit 5,7)       = UKB'nin funye karari. (bit1 = zamanlayici)
+    // Gozlem bitleri durum makinesine BAGLANMAZ: apogee kapisi (MAX_EGLIM) bloke
+    // olsa bile roket fiilen alcaliyorsa bit4/bit6 yanmali. Aksi halde tek bir
+    // kapi 4 biti birden dusurur ve yer istasyonu "alcaliyor ama emir yok"
+    // teshisini goremez.
     if (durum >= YUKSELIYOR)                            durum_bitleri |= ST_BIT_KALKIS;
     if ((durum_bitleri & ST_BIT_KALKIS) &&
         (millis() - kalkis_zaman >= MOTOR_YANMA_SURE_MS)) durum_bitleri |= ST_BIT_MOTOR_YANMA;
     if (irtifa > DURUM_MIN_IRTIFA_ESIGI)               durum_bitleri |= ST_BIT_MIN_IRTIFA;
-    if (eglim_acisi > DURUM_ACI_ESIGI)                 durum_bitleri |= ST_BIT_ACI_ESIK;
-    if (durum >= INIS_1)                               durum_bitleri |= ST_BIT_ALCALMA;
+    // bit3: govde acisi VEYA yatay eksen ivmesi esigi (Tablo 5 iki kriterli)
+    if ((eglim_acisi > DURUM_ACI_ESIGI) ||
+        (sqrtf(ivmeX * ivmeX + ivmeY * ivmeY) > DURUM_YATAY_IVME_ESIGI))
+                                                       durum_bitleri |= ST_BIT_ACI_ESIK;
+    // bit4: GOZLEM — tepe gecildi, irtifa dusuyor (funye kararindan bagimsiz)
+    if ((durum_bitleri & ST_BIT_KALKIS) &&
+        (max_irtifa_degeri - irtifa > APOGEE_IRTIFA_FARKI)) durum_bitleri |= ST_BIT_ALCALMA;
     if (ayrilma1)                                      durum_bitleri |= ST_BIT_DROGUE_EMIR;
-    if ((durum >= INIS_1) && (irtifa < AYRILMA2_MESAFE)) durum_bitleri |= ST_BIT_ANA_IRTIFA;
+    // bit6: GOZLEM — belirlenen irtifanin altina indi. max_irtifa kapisi, rampada
+    // (irtifa=0 < 550) bitin yanmasini onler; durum makinesine bagli DEGIL.
+    if ((max_irtifa_degeri > AYRILMA2_MESAFE) &&
+        (irtifa < AYRILMA2_MESAFE))                    durum_bitleri |= ST_BIT_ANA_IRTIFA;
     if (ayrilma2)                                      durum_bitleri |= ST_BIT_ANA_EMIR;
 
-    // --- 10 Hz TTL GÖNDERİM (Ek-7 s.7) ---
+    // --- MAKSİMUM HIZLI TTL GÖNDERİM (SIT/SUT) ---
     //   MOD_SIT → Tablo 3 SİT telemetri (36B) ; MOD_SUT → Tablo 6 durum (6B)
-    static unsigned long son_ttl_gonderim = 0;
-    if (millis() - son_ttl_gonderim >= SITSUT_GONDERIM_PERIYOT_MS) {
-        son_ttl_gonderim = millis();
-        if (sitSutMod == MOD_SIT) {
-            gonder_sit_paketi();
-        } else if (sitSutMod == MOD_SUT) {
-            gonder_durum_paketi();
-        }
+    //   Ek-7 minimumu 10 Hz'dir; burada tavana cikilir: HER Task1 dongusunde
+    //   gonderilir. Efektif hiz = dongu hizi (SUT ~100 Hz, SIT ~65 Hz — I2C
+    //   okuma yuku). TTL @115200 baud tavani cok daha yuksek (36B->~320Hz),
+    //   yani darbogaz UART degil dongu hizidir. vTaskDelay(10) paylasimli
+    //   oldugu icin (gercek ucus LoRa/SD kadansi) DEGISTIRILMEDI.
+    if (sitSutMod == MOD_SIT) {
+        gonder_sit_paketi();
+    } else if (sitSutMod == MOD_SUT) {
+        gonder_durum_paketi();
     }
 
     // --- STRUCT DOLDURMA VE CORE 1'E GÖNDERME ---
@@ -1091,13 +1168,14 @@ void setup() {
     Serial.begin(BAUD_TTL);
 
     // 2. Pin Modları ve Güvenlik (Tasklardan ÖNCE yapılmalı)
-    pinMode(PIN_FUNYE_1, OUTPUT);
-    pinMode(PIN_FUNYE_2, OUTPUT);
-    digitalWrite(PIN_FUNYE_1, LOW);
-    digitalWrite(PIN_FUNYE_2, LOW);
-    
-    pinMode(PIN_BUZZER, OUTPUT);
-    pinMode(PIN_LED, OUTPUT);
+    // *** ASLA DEGISTIRME: funye pinleri burada OUTPUT YAPILMAZ. ***
+    // Acikca high-Z'ye birakilir; gate'i dis pull-down GND'ye ceker. Pin
+    // OUTPUT'a yalnizca Funye1Atesle/Funye2Atesle icinde, atesleme aninda
+    // gecer ve funye_guncelle() sure dolunca tekrar high-Z'ye birakir.
+    // Gerekce icin funye_pin_serbest/funye_pin_ates ustundeki blogu oku.
+    funye_pin_serbest(PIN_FUNYE_1);
+    funye_pin_serbest(PIN_FUNYE_2);
+
     pinMode(PIN_LED_1, OUTPUT);
     pinMode(PIN_LED_2, OUTPUT);
     pinMode(PIN_LED_3, OUTPUT);
@@ -1151,7 +1229,7 @@ void setup() {
         sdOk = false;
     } else {
         lora_log("SD Kart baslatildi.");
-        logFile = SD.open("/ucus_log.csv", FILE_APPEND);
+        logFile = SD.open(LOG_DOSYA_ADI, FILE_APPEND);
         if (logFile) {
             // Dosya yeni oluşturulduysa veya boşsa başlık yaz
             if (logFile.size() == 0) {

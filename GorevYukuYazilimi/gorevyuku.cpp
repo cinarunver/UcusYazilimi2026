@@ -105,8 +105,8 @@ static inline LedDurumBgy hesapla_led_durumu_bgy(bool sistem_hazir, bool uctu,
 #define PIN_SDKART_DET 35
 #define LORA_M0 15
 #define LORA_M1 2
-#define PIN_BUZZER 12   // Kurtarma beacon buzzer (main ile ayni)
-#define PIN_LED 13      // Kurtarma beacon LED (main ile ayni)
+#define PIN_BUZZER 14   // Kurtarma beacon buzzer (main ile ayni)
+#define PIN_LED 27      // Kurtarma beacon LED (main ile ayni)
 #define PIN_LED_1 26    // Durum gosterge LED 1 (UKB ile ayni pin)
 #define PIN_LED_2 4     // Durum gosterge LED 2
 #define PIN_LED_3 25    // Durum gosterge LED 3
@@ -236,6 +236,8 @@ volatile int active_sd_buf = 0;
 volatile int sd_buf_idx = 0;
 
 QueueHandle_t telemetryQueue;
+// SD kart log dosya adi — bu karta ozel (2. gorev yuku kartina basarken gy_2 yap)
+#define LOG_DOSYA_ADI "/gy_1.csv"
 File logFile;
 bool sdOk = false;
 
@@ -503,8 +505,8 @@ void setup() {
     digitalWrite(LORA_M1, LOW);
 
     // Kurtarma beacon cikislari — baslangicta kapali
-    pinMode(PIN_BUZZER, OUTPUT);
-    pinMode(PIN_LED, OUTPUT);
+    pinMode(PIN_BUZZER, OUTPUT | PULLDOWN);
+    pinMode(PIN_LED, OUTPUT | PULLDOWN);
     digitalWrite(PIN_BUZZER, LOW);
     digitalWrite(PIN_LED, LOW);
 
@@ -545,7 +547,7 @@ void setup() {
         lora_log("UYARI: SD Kart baslatilamadi!");
         sdOk = false;
     } else {
-        logFile = SD.open("/gorevyuku_log.csv", FILE_APPEND);
+        logFile = SD.open(LOG_DOSYA_ADI, FILE_APPEND);
         if (logFile) {
             if (logFile.size() == 0)
                 logFile.println("basinc,sicaklik,nem,irtifa,lat,lng,ivmeX,ivmeY,ivmeZ,gyroX,gyroY,gyroZ");

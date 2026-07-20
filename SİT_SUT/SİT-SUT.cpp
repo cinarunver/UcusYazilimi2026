@@ -318,8 +318,43 @@ bool bmeOk = false;   // BME280 bulundu/hazir mi? (yoksa Task1 barometre okumasi
 
 // Hazır Kullanılacak Metodlar/Fonksiyonlar
 
-// Non-Blocking fünye ateşleme: Pini HIGH yapar, zamanı kaydeder.
-// 400ms sonra funye_guncelle() otomatik kapatır.
+// ============================================================================
+//  *** FUNYE PIN GUVENLIGI — BU BLOK ASLA VE ASLA DEGISTIRILMEYECEK ***
+// ============================================================================
+// KURAL: Funye pinleri setup()'ta OUTPUT YAPILMAZ. Normalde high-Z (INPUT)
+// olarak durur; gate'i harici pull-down GND'ye kilitler. Pin OUTPUT'a YALNIZCA
+// funye_pin_ates() icinde, ateslemeden hemen once gecer; FUNYE_SURE_MS dolunca
+// funye_pin_serbest() ile tekrar high-Z'ye birakilir.
+//
+// NEDEN (dokunmadan once oku):
+//  1) Boot/reset sirasinda ESP32 pinleri high-Z'dir. setup()'ta OUTPUT yapmak
+//     pini surulur hale getirir; o andan itibaren tek bir hatali digitalWrite
+//     (bozuk bellek, stack tasmasi, kacak task, brown-out sonrasi yarim reset)
+//     gercek funyeyi ateslemeye yeter.
+//  2) High-Z'de MOSFET gate'ini pull-down direnci tutar — yazilim ne yaparsa
+//     yapsin fiziksel olarak akim akmaz. Yazilim hatasi donanim guvenligini
+//     asamaz.
+//  3) Bu dosya tezgahta insan yanindayken calisiyor; risk ucus kartindan
+//     daha yuksek. "Temizlik olsun" diye setup'a pinMode(PIN_FUNYE_x, OUTPUT)
+//     EKLEME — korumanin tamamini iptal eder.
+//
+// Sirayi da bozma: once digitalWrite(LOW), sonra pinMode. Ters sira,
+// OUTPUT'a gecis aninda registerde kalmis eski HIGH'i pine basar (glitch).
+// Bu davranis src/main.cpp ile birebir ayni tutulmalidir.
+// ============================================================================
+static inline void funye_pin_serbest(uint8_t pin) {
+    digitalWrite(pin, LOW);      // cikis registerini once temizle
+    pinMode(pin, INPUT);         // high-Z — surucu tamamen devre disi
+}
+
+static inline void funye_pin_ates(uint8_t pin) {
+    digitalWrite(pin, LOW);      // OUTPUT'a gecerken glitch olmasin
+    pinMode(pin, OUTPUT | PULLDOWN);
+    digitalWrite(pin, HIGH);
+}
+
+// Non-Blocking fünye ateşleme: Pini OUTPUT+HIGH yapar, zamanı kaydeder.
+// 400ms sonra funye_guncelle() otomatik kapatır ve pini high-Z'ye birakir.
 void Funye1Atesle(){
     if (!funye1_aktif) {
         // Gorsel gosterge: drogue LED'i her modda yakilir (latch — Durdur'a kadar yanik kalir)
@@ -327,7 +362,7 @@ void Funye1Atesle(){
         // SUT tezgah testinde (bayrak 1 iken) gercek fünyeyi ATESLEME — sadece LED.
         // SİT, gercek ucus ve bayrak 0 iken gercek fünye pini surulur.
         if (!(SUT_FUNYE_YERINE_LED && sitSutMod == MOD_SUT)) {
-            digitalWrite(PIN_FUNYE_1, HIGH);
+            funye_pin_ates(PIN_FUNYE_1);
         }
         funye1_baslangic = millis();
         funye1_aktif = true;
@@ -340,7 +375,7 @@ void Funye2Atesle(){
         // Gorsel gosterge: ana parasut LED'i her modda yakilir (latch)
         digitalWrite(PIN_LED_ANA, HIGH);
         if (!(SUT_FUNYE_YERINE_LED && sitSutMod == MOD_SUT)) {
-            digitalWrite(PIN_FUNYE_2, HIGH);
+            funye_pin_ates(PIN_FUNYE_2);
         }
         funye2_baslangic = millis();
         funye2_aktif = true;
@@ -351,11 +386,11 @@ void Funye2Atesle(){
 // Her döngüde çağrılmalı — süresi dolan fünyeyi kapatır
 void funye_guncelle() {
     if (funye1_aktif && (millis() - funye1_baslangic >= FUNYE_SURE_MS)) {
-        digitalWrite(PIN_FUNYE_1, LOW);
+        funye_pin_serbest(PIN_FUNYE_1);
         funye1_aktif = false;
     }
     if (funye2_aktif && (millis() - funye2_baslangic >= FUNYE_SURE_MS)) {
-        digitalWrite(PIN_FUNYE_2, LOW);
+        funye_pin_serbest(PIN_FUNYE_2);
         funye2_aktif = false;
     }
 }
@@ -560,8 +595,8 @@ void Task1code(void *pvParameters) {
             // Fünye/LED durumunu temizle — tekrarli SUT icin temiz baslangic
             funye1_aktif = false;
             funye2_aktif = false;
-            digitalWrite(PIN_FUNYE_1, LOW);
-            digitalWrite(PIN_FUNYE_2, LOW);
+            funye_pin_serbest(PIN_FUNYE_1);   // high-Z'ye don (sadece LOW yetmez)
+            funye_pin_serbest(PIN_FUNYE_2);
             digitalWrite(PIN_LED_DROGUE, LOW);
             digitalWrite(PIN_LED_ANA, LOW);
         }
@@ -908,11 +943,15 @@ void setup() {
     Serial.begin(BAUD_TTL);
 
     // 2. Pin Modları ve Güvenlik (Tasklardan ÖNCE yapılmalı)
-    pinMode(PIN_FUNYE_1, OUTPUT);
-    pinMode(PIN_FUNYE_2, OUTPUT);
-    digitalWrite(PIN_FUNYE_1, LOW);
-    digitalWrite(PIN_FUNYE_2, LOW);
-    
+    // *** ASLA DEGISTIRME: funye pinleri burada OUTPUT YAPILMAZ. ***
+    // Acikca high-Z'ye birakilir; gate'i dis pull-down GND'ye ceker. Pin
+    // OUTPUT'a yalnizca Funye1Atesle/Funye2Atesle icinde, atesleme aninda
+    // gecer ve funye_guncelle() sure dolunca tekrar high-Z'ye birakir.
+    // Gerekce icin funye_pin_serbest/funye_pin_ates ustundeki blogu oku.
+    funye_pin_serbest(PIN_FUNYE_1);
+    funye_pin_serbest(PIN_FUNYE_2);
+
+
     pinMode(PIN_BUZZER, OUTPUT);
     pinMode(PIN_LED, OUTPUT);
     pinMode(PIN_LED_1, OUTPUT);

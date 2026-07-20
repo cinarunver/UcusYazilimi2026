@@ -1,11 +1,11 @@
-# Graph Report - UcusYazilimi2026  (2026-07-20)
+# Graph Report - UcusYazilimi2026  (2026-07-17)
 
 ## Corpus Check
-- 39 files · ~53,288 words
+- 39 files · ~52,320 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 830 nodes · 936 edges · 117 communities (49 shown, 68 thin omitted)
+- 824 nodes · 916 edges · 120 communities (52 shown, 68 thin omitted)
 - Extraction: 100% EXTRACTED · 0% INFERRED · 0% AMBIGUOUS
 - Token cost: 0 input · 0 output
 
@@ -123,8 +123,11 @@
 - gorevyuku.cpp
 - GorevYukuWire
 - LoRa Paket Küçültme (Fixed-Point) — Tasarım
+- SİT-SUT.cpp
 - Global Constraints
 - SimpleKalmanFilter
+- SimpleKalmanFilter
+- gonder_paket_csv
 - gonder_paket_framed_dma
 - hesapla_led_durumu_bgy
 - pack_telemetry_wire
@@ -156,15 +159,15 @@
 ## Import Cycles
 - None detected.
 
-## Communities (117 total, 68 thin omitted)
+## Communities (120 total, 68 thin omitted)
 
 ### Community 0 - "Debug Firmware (main_debug)"
 Cohesion: 0.06
-Nodes (50): bufferla_ve_yaz_sd(), build_framed(), File, uart_port_t, crc16_ccitt(), dbg_append(), durum_adi(), Funye1Atesle() (+42 more)
+Nodes (48): bufferla_ve_yaz_sd(), build_framed(), File, uart_port_t, crc16_ccitt(), dbg_append(), durum_adi(), Funye1Atesle() (+40 more)
 
 ### Community 1 - "SIT/SUT Reference Firmware"
-Cohesion: 0.06
-Nodes (48): HardwareSerial, Print, be32_to_float(), crc16_ccitt(), csv_alan(), float_to_be32(), Funye1Atesle(), Funye2Atesle() (+40 more)
+Cohesion: 0.10
+Nodes (21): TelemetryPacket, ayrilma1_durum, ayrilma2_durum, basinc, bmeSicaklik, dikeyHiz, eglimAcisi, gpsBoylam (+13 more)
 
 ### Community 2 - "Main Flight Firmware"
 Cohesion: 0.11
@@ -279,8 +282,8 @@ Cohesion: 0.50
 Nodes (3): Donanım / SUT Doğrulama (manuel — commit sonrası), Notlar, Task 2: `main.cpp` entegrasyonu (led_uygula, sistem_hazir, LED yazımlarını merkezleştirme)
 
 ### Community 102 - "main.cpp"
-Cohesion: 0.21
-Nodes (17): float_to_be32(), Funye1Atesle(), Funye2Atesle(), funye_guncelle(), funye_pin_ates(), funye_pin_serbest(), gonder_durum_paketi(), gonder_sit_paketi() (+9 more)
+Cohesion: 0.25
+Nodes (13): float_to_be32(), Funye1Atesle(), Funye2Atesle(), funye_guncelle(), gonder_durum_paketi(), gonder_sit_paketi(), hesapla_dikey_hiz(), led_uygula() (+5 more)
 
 ### Community 103 - "LED Durum Göstergesi Tasarımı"
 Cohesion: 0.17
@@ -291,8 +294,8 @@ Cohesion: 0.22
 Nodes (7): SimpleKalmanFilter, err_estimate, err_measure, first_run, kalman_gain, last_estimate, q
 
 ### Community 105 - "hesapla_led_durumu"
-Cohesion: 0.50
-Nodes (4): LedDurum, led1, led2, led3
+Cohesion: 0.33
+Nodes (6): hesapla_led_durumu(), LedDurum, led1, led2, led3, UcusDurumu
 
 ### Community 106 - "gonder_paket_framed_dma"
 Cohesion: 0.50
@@ -318,13 +321,25 @@ Nodes (11): GorevYukuWire, basinc, gpsBoylam, gpsEnlem, gyroX, gyroY, gyroZ, irt
 Cohesion: 0.17
 Nodes (11): Doğrulanacak Varsayımlar, Gönderim Hızı, Kapsam Dışı (YAGNI), Kısıtlar, LoRa Paket Küçültme (Fixed-Point) — Tasarım, Mimari Karar, Problem, Test / Doğrulama (+3 more)
 
+### Community 112 - "SİT-SUT.cpp"
+Cohesion: 0.29
+Nodes (9): float_to_be32(), Funye1Atesle(), Funye2Atesle(), funye_guncelle(), gonder_durum_paketi(), gonder_sit_paketi(), hesapla_dikey_hiz(), Task1code() (+1 more)
+
 ### Community 113 - "Global Constraints"
 Cohesion: 0.22
 Nodes (8): Global Constraints, LoRa Paket Küçültme (Fixed-Point) — Implementasyon Planı, Self-Review Notları, Task 1: Roket wire header + host test, Task 2: Roket wire'ı main.cpp'ye entegre et + gönderim hızı, Task 3: Görev yükü wire header + host test, Task 4: Görev yükü wire'ı gorevyuku.cpp'ye entegre et, Task 5: Yer istasyonu (Python) parse + simülasyon revizesi
 
+### Community 114 - "SimpleKalmanFilter"
+Cohesion: 0.22
+Nodes (7): SimpleKalmanFilter, err_estimate, err_measure, first_run, kalman_gain, last_estimate, q
+
 ### Community 115 - "SimpleKalmanFilter"
 Cohesion: 0.25
 Nodes (7): SimpleKalmanFilter, err_estimate, err_measure, first_run, kalman_gain, last_estimate, q
+
+### Community 116 - "gonder_paket_csv"
+Cohesion: 0.29
+Nodes (8): HardwareSerial, Print, be32_to_float(), crc16_ccitt(), csv_alan(), gonder_paket_csv(), gonder_paket_framed(), Task2code()
 
 ### Community 117 - "gonder_paket_framed_dma"
 Cohesion: 0.33
@@ -355,8 +370,8 @@ _Questions this graph is uniquely positioned to answer:_
 - **What connects `err_measure`, `err_estimate`, `q` to the rest of the system?**
   _493 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Debug Firmware (main_debug)` be split into smaller, more focused modules?**
-  _Cohesion score 0.06009783368273934 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.06033182503770739 - nodes in this community are weakly interconnected._
 - **Should `SIT/SUT Reference Firmware` be split into smaller, more focused modules?**
-  _Cohesion score 0.05505279034690799 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.09523809523809523 - nodes in this community are weakly interconnected._
 - **Should `Main Flight Firmware` be split into smaller, more focused modules?**
   _Cohesion score 0.10526315789473684 - nodes in this community are weakly interconnected._

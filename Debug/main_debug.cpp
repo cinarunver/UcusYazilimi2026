@@ -232,7 +232,9 @@ SimpleKalmanFilter kf_gyroZ(2.906, 9.982, 0.3884);
 SimpleKalmanFilter kf_roll(2.906, 9.982, 0.3884);
 SimpleKalmanFilter kf_pitch(2.906, 9.982, 0.3884);
 SimpleKalmanFilter kf_yaw(2.906, 9.982, 0.3884);
-SimpleKalmanFilter kf_irtifa(16.3, 264, 0.1112);
+// DIKKAT: e_mea'yi buyutmek filtreyi OLDURUR (K -> 0, irtifa donar). Gecmiste
+// 16.3 denendi -> irtifa -0.1'de dondu, apogee tetiklenmedi. Detay: src/main.cpp
+SimpleKalmanFilter kf_irtifa(1.5, 1.5, 0.1);
 
 // --- SENSÖR NESNELERİ ---
 Adafruit_BNO055 bno = Adafruit_BNO055(BNO055_DEF, BNO055_ADDR);
@@ -338,11 +340,46 @@ static void dbg_append(const char* fmt, ...) {
 //  Hazır Kullanılacak Metodlar/Fonksiyonlar
 // ============================================================
 
+// ============================================================================
+//  *** FUNYE PIN GUVENLIGI — BU BLOK ASLA VE ASLA DEGISTIRILMEYECEK ***
+// ============================================================================
+// KURAL: Funye pinleri setup()'ta OUTPUT YAPILMAZ. Normalde high-Z (INPUT)
+// olarak durur; gate'i harici pull-down GND'ye kilitler. Pin OUTPUT'a YALNIZCA
+// funye_pin_ates() icinde, ateslemeden hemen once gecer; FUNYE_SURE_MS dolunca
+// funye_pin_serbest() ile tekrar high-Z'ye birakilir.
+//
+// NEDEN (dokunmadan once oku):
+//  1) Boot/reset sirasinda ESP32 pinleri high-Z'dir. setup()'ta OUTPUT yapmak
+//     pini surulur hale getirir; o andan itibaren tek bir hatali digitalWrite
+//     (bozuk bellek, stack tasmasi, kacak task, brown-out sonrasi yarim reset)
+//     gercek funyeyi ateslemeye yeter.
+//  2) High-Z'de MOSFET gate'ini pull-down direnci tutar — yazilim ne yaparsa
+//     yapsin fiziksel olarak akim akmaz. Yazilim hatasi donanim guvenligini
+//     asamaz.
+//  3) Bu debug sketch'i masada, insan yanindayken calisiyor. FUNYE_GERCEK_ATES
+//     yanlislikla 1 birakilirsa tek koruma bu high-Z katmanidir. "Temizlik
+//     olsun" diye setup'a pinMode(PIN_FUNYE_x, OUTPUT) EKLEME.
+//
+// Sirayi da bozma: once digitalWrite(LOW), sonra pinMode. Ters sira,
+// OUTPUT'a gecis aninda registerde kalmis eski HIGH'i pine basar (glitch).
+// Bu davranis src/main.cpp ile birebir ayni tutulmalidir.
+// ============================================================================
+static inline void funye_pin_serbest(uint8_t pin) {
+    digitalWrite(pin, LOW);      // cikis registerini once temizle
+    pinMode(pin, INPUT);         // high-Z — surucu tamamen devre disi
+}
+
+static inline void funye_pin_ates(uint8_t pin) {
+    digitalWrite(pin, LOW);      // OUTPUT'a gecerken glitch olmasin
+    pinMode(pin, OUTPUT | PULLDOWN);
+    digitalWrite(pin, HIGH);
+}
+
 // Non-Blocking fünye ateşleme
 void Funye1Atesle(){
     if (!funye1_aktif) {
 #if FUNYE_GERCEK_ATES
-        digitalWrite(PIN_FUNYE_1, HIGH);
+        funye_pin_ates(PIN_FUNYE_1);
 #endif
         funye1_baslangic = millis();
         funye1_aktif = true;
@@ -357,7 +394,7 @@ void Funye1Atesle(){
 void Funye2Atesle(){
     if (!funye2_aktif) {
 #if FUNYE_GERCEK_ATES
-        digitalWrite(PIN_FUNYE_2, HIGH);
+        funye_pin_ates(PIN_FUNYE_2);
 #endif
         funye2_baslangic = millis();
         funye2_aktif = true;
@@ -372,13 +409,13 @@ void Funye2Atesle(){
 void funye_guncelle() {
     if (funye1_aktif && (millis() - funye1_baslangic >= FUNYE_SURE_MS)) {
 #if FUNYE_GERCEK_ATES
-        digitalWrite(PIN_FUNYE_1, LOW);
+        funye_pin_serbest(PIN_FUNYE_1);
 #endif
         funye1_aktif = false;
     }
     if (funye2_aktif && (millis() - funye2_baslangic >= FUNYE_SURE_MS)) {
 #if FUNYE_GERCEK_ATES
-        digitalWrite(PIN_FUNYE_2, LOW);
+        funye_pin_serbest(PIN_FUNYE_2);
 #endif
         funye2_aktif = false;
     }
@@ -955,10 +992,13 @@ void setup() {
     pin_haritasi_bas();
 
     // 2. Pin Modları ve Güvenlik
-    pinMode(PIN_FUNYE_1, OUTPUT);
-    pinMode(PIN_FUNYE_2, OUTPUT);
-    digitalWrite(PIN_FUNYE_1, LOW);
-    digitalWrite(PIN_FUNYE_2, LOW);
+    // *** ASLA DEGISTIRME: funye pinleri burada OUTPUT YAPILMAZ. ***
+    // Acikca high-Z'ye birakilir; gate'i dis pull-down GND'ye ceker. Pin
+    // OUTPUT'a yalnizca Funye1Atesle/Funye2Atesle icinde, atesleme aninda
+    // gecer ve funye_guncelle() sure dolunca tekrar high-Z'ye birakir.
+    // Gerekce icin funye_pin_serbest/funye_pin_ates ustundeki blogu oku.
+    funye_pin_serbest(PIN_FUNYE_1);
+    funye_pin_serbest(PIN_FUNYE_2);
 
     pinMode(PIN_BUZZER, OUTPUT);
     pinMode(PIN_LED, OUTPUT);

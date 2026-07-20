@@ -21,12 +21,12 @@
 #define FUNYE_GERCEK_ATES   1     // 0 = SİMÜLE (pin sürülmez, güvenli) | 1 = GERÇEK ateşleme
 
 // ── Pinler (ana uçuş yazılımıyla aynı) ──────────────────────────────────────
-#define PIN_FUNYE   13            // Fünye / MOSFET çıkışı (main.cpp PIN_FUNYE_1)
+#define PIN_FUNYE   14            // Fünye / MOSFET çıkışı (main.cpp PIN_FUNYE_1)
 #define PIN_LED     25            // LED çıkışı           (main.cpp PIN_LED)
 
 // ── Zamanlama sabitleri ─────────────────────────────────────────────────────
 #define BASLANGIC_SABITLEME_MS  1000UL    // Boot'ta pin LOW garanti bekleme
-#define LED_GECIKME_MS         10000UL    // Güç → LED arası bekleme
+#define LED_GECIKME_MS         1000UL    // Güç → LED arası bekleme
 #define FUNYE_GECIKME_MS       10000UL    // LED → fünye arası bekleme
 #define FUNYE_PALS_SAYISI          5      // Kaç kez ateşleme palsı
 #define FUNYE_ACIK_MS           5000UL    // Her palsta pin HIGH kalma süresi
@@ -48,10 +48,40 @@ int  funye_pals_no             = 0;    // Tamamlanan AÇIK pals sayısı
 bool funye_pin_acik            = false; // Şu an fünye pini HIGH mı
 bool atesleme_yapildi          = false; // Tek atış kilidi
 
+// ============================================================================
+//  *** FUNYE PIN GUVENLIGI — BU FONKSIYON ASLA VE ASLA DEGISTIRILMEYECEK ***
+// ============================================================================
+// KURAL: PIN_FUNYE setup()'ta OUTPUT YAPILMAZ. Pin OUTPUT'a yalnizca HIGH
+// yazilacagi an gecer; LOW yazilirken high-Z'ye (INPUT) geri birakilir. Boylece
+// palslar arasinda ve sekans bitince pin surulmez halde kalir.
+//
+// NEDEN (dokunmadan once oku):
+//  1) Boot/reset sirasinda ESP32 pinleri high-Z'dir. setup()'ta OUTPUT yapmak
+//     pini surulur hale getirir; o andan itibaren tek bir hatali digitalWrite
+//     (bozuk bellek, kacak kod yolu, brown-out sonrasi yarim reset) gercek
+//     funyeyi ateslemeye yeter.
+//  2) High-Z'de MOSFET gate'ini harici pull-down GND'ye kilitler — yazilim ne
+//     yaparsa yapsin fiziksel olarak akim akmaz. Yazilim hatasi donanim
+//     guvenligini asamaz.
+//  3) Bu sketch tek isi funye atesleme olan, tezgahta insan yanindayken
+//     calisan bir sketch. Buraya pinMode(PIN_FUNYE, OUTPUT) satirini setup'a
+//     tasima veya kalici OUTPUT'a cevirme.
+//
+// Sira onemli: HIGH'ta once digitalWrite(LOW) sonra pinMode(OUTPUT) — ters
+// sira, OUTPUT'a gecis aninda registerde kalmis eski HIGH'i pine basar.
+// Bu davranis src/main.cpp ile ayni mantiktadir.
+// ============================================================================
 // SİMÜLE modunda pin sürülmez; GERÇEK modda fünye pinini yazar.
 void FunyePinYaz(int seviye) {
 #if FUNYE_GERCEK_ATES
-    digitalWrite(PIN_FUNYE, seviye);
+    if (seviye == HIGH) {
+        digitalWrite(PIN_FUNYE, LOW);       // OUTPUT'a gecerken glitch olmasin
+        pinMode(PIN_FUNYE, OUTPUT | PULLDOWN);
+        digitalWrite(PIN_FUNYE, HIGH);
+    } else {
+        digitalWrite(PIN_FUNYE, LOW);       // cikis registerini once temizle
+        pinMode(PIN_FUNYE, INPUT);          // high-Z — surucu tamamen devre disi
+    }
 #else
     (void)seviye;                       // SİMÜLE: pin sürülmez
 #endif
@@ -115,8 +145,7 @@ void GeriSayimLog(const char* etiket, unsigned long gecen, unsigned long toplam)
 
 void setup() {
     // --- GÜVENLİK: İlk iş fünye pinini güvenli (LOW) hale getirmek ---
-    pinMode(PIN_FUNYE, OUTPUT);
-    digitalWrite(PIN_FUNYE, LOW);
+
 
     pinMode(PIN_LED, OUTPUT);
     digitalWrite(PIN_LED, LOW);
