@@ -105,8 +105,8 @@ static inline LedDurumBgy hesapla_led_durumu_bgy(bool sistem_hazir, bool uctu,
 #define PIN_SDKART_DET 35
 #define LORA_M0 15
 #define LORA_M1 2
-#define PIN_BUZZER 14   // Kurtarma beacon buzzer (main ile ayni)
-#define PIN_LED 27      // Kurtarma beacon LED (main ile ayni)
+#define PIN_BUZZER 13   // Kurtarma beacon buzzer (main ile ayni)
+#define PIN_LED 12      // Kurtarma beacon LED (main ile ayni)
 #define PIN_LED_1 26    // Durum gosterge LED 1 (UKB ile ayni pin)
 #define PIN_LED_2 4     // Durum gosterge LED 2
 #define PIN_LED_3 25    // Durum gosterge LED 3
@@ -118,7 +118,7 @@ static inline LedDurumBgy hesapla_led_durumu_bgy(bool sistem_hazir, bool uctu,
 // --- Cerceve protokolu ---
 #define SYNC_BYTE_1          0xAA
 #define SYNC_BYTE_2          0x55
-#define LORA_GONDERIM_ORANI    1   // her 1. paket -> ~10 Hz
+#define LORA_GONDERIM_ORANI    10   // her 1. paket -> ~10 Hz
 
 // --- Sensor sabitleri ---
 #define BME280_ADDR_PRIMARY   0x76

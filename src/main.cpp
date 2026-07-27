@@ -287,12 +287,62 @@ float referans_basinc = 1013.25;
 // MAX_EGLIM aynen gecerlidir — asagidaki secim gercek ucus yolunu DEGISTIRMEZ.
 // SUT'un apogee'yi gecmesi, gercek ucusta da gececegi ANLAMINA GELMEZ.
 #define SUT_MAX_EGLIM        180.0  // derece - SUT'ta egim kapisi devre disi
+// --- SUT'A OZEL PLATO APOGEE DEDEKTORU (YALNIZ MOD_SUT) ---
+// Roketsan SUT anormal ucus senaryosunun tepesi DUZ bir platodur (~500 m,
+// 2.5s-5.2s): irtifa hic degismez. Ana algoritmanin apogee kapisi
+// (max_irtifa - irtifa > 15 m VE dikey_hiz < 0) platoda MATEMATIKSEL OLARAK
+// tetiklenemez — delta = 0, hiz = 0. Bu yuzden apogee ancak inis basladiktan
+// 15 m sonra, yani apogee penceresinin DISINDA yakalaniyordu.
+//
+// Cozum: SUT'ta ek bir kriter — "yukselis durdu" = apogee.
+//
+// DWELL NEDEN ZAMAN DEGIL, ORNEK SAYISI?
+// Sentetik veri TTL'den paket paket enjekte edilir (Task2, ~20 Hz). Paketler
+// arasinda `irtifa` DONUKTUR; Task1 ondan cok daha hizli doner. Duvar saati
+// (millis) dwell kullanilirsa seri hat 300 ms takildiginda (USB jitter, PC
+// tarafi sleep kaymasi, checksum'dan dusen frame) max_irtifa artmaz ve
+// YUKSELIS ORTASINDA SAHTE APOGEE uretilir. Bu gerceklesti.
+// Bu yuzden dwell, enjekte edilen ORNEK SAYISI ile olculur: veri akmazsa
+// sayac ilerlemez, dedektor jitter'dan tamamen bagimsizdir.
+//
+// TOLERANS NEDEN GEREKLI?
+// Ilk denemede dwell tek basina kullanildi ve NORMAL SUT senaryosunda apogee
+// KIL PAYI ERKEN atesledi: normal senaryonun tepesi sivridir, tepeden 6 ornek
+// sonra plato dedektoru doluyor, ana kriter (15 m dusus) ise biraz daha gec
+// yakaliyordu — yani dedektor asil kriteri onden kesiyordu.
+// Cozum: plato dedektoru YALNIZCA "hala tepedeyim, inmiyorum" iken gecerli.
+// Roket fiilen alcalmaya basladiginda (dusus > tolerans) bu kriter kendini
+// devre disi birakir ve apogee kararini ORIJINAL 15 m kapisi verir.
+//   - Anormal senaryo: plato tamamen duz, dusus = 0 -> tolerans hep saglanir.
+//   - Normal senaryo : tepeden sonra hemen alcalir -> tolerans bozulur, plato
+//                      dedektoru devreden cikar, davranis eskisiyle AYNI.
+//
+// 20 ornek @20 Hz ~= 1.0 s. Anormal senaryoda plato ~2.6 s (52 ornek) surdugu
+// icin apogee ~3.6 s'de duser — 2.5s-5.2s penceresinin rahatca icinde.
+//
+// DIKKAT: Bu kriter `sitSutMod == MOD_SUT` ile kapilidir. Gercek ucusta ve
+// SIT'te apogee YALNIZCA orijinal 15 m + negatif hiz kapisiyla tetiklenir —
+// GERCEK UCUS YOLU DEGISMEDI.
+#define SUT_APOGEE_PLATO_ORNEK      20   // adet - max_irtifa bu kadar ORNEK artmazsa apogee
+#define SUT_APOGEE_PLATO_TOLERANS  2.0   // m  - bundan fazla dustuyse plato DEGIL, inis
+#define SUT_APOGEE_MIN_IRTIFA    100.0   // m  - rampada/alcakta yanlis tetigi onler
+
 // --- SUT'A OZEL 2. AYRILMA IRTIFASI (YALNIZ MOD_SUT) ---
 // SUT senaryosunun sentetik yorungesi gercek ucus profiliyle ayni degildir;
 // 2. ayrilmanin test icinde tetiklendigini gormek icin esik ayri tutulur.
+//
+// ESKI DEGER 490.0 HATALIYDI: plato 500 m'de, apogee ise 500-15 = 485 m'de
+// tetikleniyordu. 490 > 485 oldugu icin ana parasut kapisi apogee'den SONRAKI
+// ILK dongude aciliyordu — iki funye arasi ~5 m = ~25 ms. Grafikte iki
+// ayrilmanin ust uste binmesinin sebebi buydu.
+//
+// YENI DEGER: senaryonun inis hizi ~204 m/s (500 m -> 0, ~2.45 s). Ana parasut
+// penceresi 5.4s-5.6s, inis 5.2s'de 500 m'den basliyor:
+//   5.4s -> ~459 m , 5.5s -> ~439 m , 5.6s -> ~418 m
+// Pencerenin ortasi icin 440 m secildi (~5.49s).
 // DIKKAT: Gercek ucusta (MOD_BEKLEME) ve SIT'te AYRILMA2_MESAFE (550 m) aynen
 // gecerlidir — asagidaki secim GERCEK UCUS YOLUNU DEGISTIRMEZ.
-#define SUT_AYRILMA2_MESAFE  480.0  // m     - SUT'ta ana parasut acilma irtifasi
+#define SUT_AYRILMA2_MESAFE  440.0  // m     - SUT'ta ana parasut acilma irtifasi
 #define MIN_DIKEY_HIZ          0.0  // m/s   - Bu değerin altı (negatif) = düşüyor (BME280)
 #define KALKIS_IVME_ESIGI     20.0  // m/s²  - Z ekseninde bu ivmenin üstü = kalkış (BNO055)
 #define INIS_HIZ_ESIGI         2.0  // m/s   - Bu değerin altı = yerde sayılır
@@ -341,6 +391,13 @@ bool funye2_aktif = false;
 float onceki_irtifa = 0.0;
 unsigned long onceki_zaman = 0;
 float anlik_dikey_hiz = 0.0;
+// --- SUT PLATO APOGEE DEDEKTORU (YALNIZ MOD_SUT'ta okunur) ---
+// sut_veri_sayaci : Task2 her basarili 36B enjeksiyonda ARTIRIR (uretici).
+// sut_son_sayac   : Task1'in en son isledigi sayac degeri (tuketici).
+// sut_plato_ornek : max_irtifa'nin artmadigi ardisik ORNEK sayisi.
+volatile uint32_t sut_veri_sayaci = 0;
+uint32_t sut_son_sayac  = 0;
+uint16_t sut_plato_ornek = 0;
 float eglim_acisi = 0.0; // Roketin dikeyden sapma açısı (Tilt)
 
 // --- KALMAN FİLTRESİ SINIFI ---
@@ -394,7 +451,10 @@ TinyGPSPlus gps;
 float ivmeX = 0.0, ivmeY = 0.0, ivmeZ = 0.0;
 float gyroX = 0.0, gyroY = 0.0, gyroZ = 0.0;
 // BNO055'in roketçilikte en büyük avantajı Euler açılarını donanımsal hesaplamasıdır:
-float roll = 0.0, pitch = 0.0, yaw = 0.0; 
+float roll = 0.0, pitch = 0.0, yaw = 0.0;
+// Yonelim quaternion'u (3D icin — Euler gimbal lock'una karsi). w>=0 normalize edilir;
+// havadan qx/qy/qz gider, yer istasyonu w = sqrt(1 - x^2 - y^2 - z^2) ile geri kurar.
+float qx = 0.0, qy = 0.0, qz = 0.0;
 
 // Barometre (BME280) Verileri
 float irtifa = 0.0; // basinc/bmeSicaklik/nem kullanilmadigi icin kaldirildi
@@ -411,7 +471,8 @@ struct TelemetryPacket {
     float ivmeX, ivmeY, ivmeZ;
     float ivmeToplam; // Bileske ivme buyuklugu = sqrt(x^2+y^2+z^2) (core0'da hesaplanir)
     float gyroX, gyroY, gyroZ;
-    float roll, pitch, yaw;
+    float roll, pitch, yaw;      // SD log + eglim_acisi icin (havadan GITMEZ)
+    float qx, qy, qz;            // yonelim quaternion — havadan bunlar gider (gimbal lock'suz 3D)
     float irtifa;
     float dikeyHiz; // Yeni eklenen dikey hız verisi
     float eglimAcisi; // Yeni eklenen eğim açısı
@@ -425,7 +486,7 @@ struct TelemetryPacket {
 // --- HAVADAN GİDEN FIXED-POINT WIRE PAKET (23 byte) ---
 // TelemetryPacket (float, 59B) yalniz queue + SD icin kullanilir; LoRa'ya
 // giderken bu packed int wire pakete quantize edilir (paket kucultme).
-// Little-endian. Yer istasyonu Python format: '<3hH3h2iB'.
+// Little-endian. Yer istasyonu Python format: '<7h2iB'.  (roll/pitch/yaw -> qx/qy/qz quaternion)
 // Olcekler: ivme x100, aci x100, irtifa x10, hiz x10, GPS x1e7.
 // NOT: ivmeX/ivmeY/ivmeZ ve gyroX/Y/Z tek tek havadan GONDERILMEZ; bunun yerine
 //      bileske (toplam) ivme buyuklugu tek int16 slot ile gider. Ham eksenler SD'de
@@ -433,8 +494,7 @@ struct TelemetryPacket {
 #pragma pack(push, 1)
 struct TelemetryWire {
     int16_t  ivmeToplam;                  // bileske ivme buyuklugu sqrt(x^2+y^2+z^2) (kalkis/g gostergesi)
-    int16_t  roll, pitch;
-    uint16_t yaw;
+    int16_t  qx, qy, qz;                  // yonelim quaternion x10000 (w>=0; w=sqrt(1-x^2-y^2-z^2))
     int16_t  irtifa, dikeyHiz, eglimAcisi;
     int32_t  gpsEnlem, gpsBoylam;
     uint8_t  durum;   // bit0=ayrilma1, bit1=ayrilma2, bit2-4=ucus_durumu
@@ -611,6 +671,7 @@ uint16_t crc16_ccitt(const uint8_t* data, size_t len) {
 #define WIRE_OLCEK_IRTIFA   10.0f   // m     x10
 #define WIRE_OLCEK_HIZ      10.0f   // m/s   x10
 #define WIRE_OLCEK_GPS      1e7     // derece x1e7 (int32)
+#define WIRE_OLCEK_QUAT  10000.0f   // quaternion bileseni [-1,1] x10000 (int16, w>=0)
 
 static inline int16_t q16(float v, float scale) {
     float x = roundf(v * scale);
@@ -634,9 +695,9 @@ static inline int32_t q32(double v, double scale) {
 // TelemetryPacket (float) -> TelemetryWire (packed int)
 static inline void pack_telemetry_wire(TelemetryWire& w, const TelemetryPacket& p) {
     w.ivmeToplam = q16(p.ivmeToplam, WIRE_OLCEK_IVME);  // bileske ivme; ham eksenler havadan gitmez
-    w.roll  = q16(p.roll,  WIRE_OLCEK_ACI);
-    w.pitch = q16(p.pitch, WIRE_OLCEK_ACI);
-    w.yaw   = qu16(p.yaw,  WIRE_OLCEK_ACI);
+    w.qx = q16(p.qx, WIRE_OLCEK_QUAT);   // roll/pitch/yaw yerine quaternion (gimbal lock'suz)
+    w.qy = q16(p.qy, WIRE_OLCEK_QUAT);
+    w.qz = q16(p.qz, WIRE_OLCEK_QUAT);
     w.irtifa     = q16(p.irtifa,     WIRE_OLCEK_IRTIFA);
     w.dikeyHiz   = q16(p.dikeyHiz,   WIRE_OLCEK_HIZ);
     w.eglimAcisi = q16(p.eglimAcisi, WIRE_OLCEK_ACI);
@@ -827,6 +888,10 @@ void Task1code(void *pvParameters) {
         kalkis_zaman      = 0;
         onceki_zaman      = 0;
         anlik_dikey_hiz   = 0.0;
+        // Plato dedektorunu sifirla; sayaci Task2'nin guncel degerine resenkronla
+        // (mod gecisinden onceki paketler plato olarak sayilmasin).
+        sut_plato_ornek = 0;
+        sut_son_sayac   = sut_veri_sayaci;
         funye1_aktif = false;
         funye2_aktif = false;
         funye_pin_serbest(PIN_FUNYE_1);
@@ -852,6 +917,18 @@ void Task1code(void *pvParameters) {
         yaw   = kf_yaw.updateEstimate(o.orientation.x);
         roll  = kf_roll.updateEstimate(o.orientation.y);
         pitch = kf_pitch.updateEstimate(o.orientation.z);
+
+        // Yonelim quaternion'u (3D telemetri icin — gimbal lock'suz). HAM gonderilir:
+        // birbirine bagli quat bilesenlerini ayri skaler Kalman'lamak yanlistir.
+        // q ile -q ayni donusu temsil eder; w>=0 olacak sekilde normalize et ki yer
+        // istasyonu w = sqrt(1 - x^2 - y^2 - z^2) ile tek degeri geri kurabilsin.
+        {
+            imu::Quaternion q = bno.getQuat();
+            float sgn = (q.w() < 0.0f) ? -1.0f : 1.0f;
+            qx = sgn * q.x();
+            qy = sgn * q.y();
+            qz = sgn * q.z();
+        }
 
         // 2. Barometre (BME280) — irtifa her zaman; basinc YALNIZ SİT modunda (Tablo 3)
         irtifa = kf_irtifa.updateEstimate(bme.readAltitude(referans_basinc));
@@ -903,6 +980,16 @@ void Task1code(void *pvParameters) {
             // Max irtifa güncelle (sadece yükseliş fazında)
             if (irtifa > max_irtifa_degeri) {
                 max_irtifa_degeri = irtifa;
+                sut_plato_ornek   = 0;   // hala yukseliyor -> plato sayacini sifirla
+            } else {
+                // SUT: yalnizca YENI bir sentetik ornek geldiginde say. Paketler
+                // arasi Task1 donguleri sayilmaz — aksi halde dedektor Task1
+                // hizina ve seri hat jitter'ina bagli olurdu.
+                uint32_t sayac = sut_veri_sayaci;
+                if (sayac != sut_son_sayac) {
+                    sut_son_sayac = sayac;
+                    if (sut_plato_ornek < 0xFFFF) sut_plato_ornek++;
+                }
             }
 
             // ================================================================
@@ -929,8 +1016,22 @@ void Task1code(void *pvParameters) {
             // ================================================================
             {
             const float egim_kapisi = (sitSutMod == MOD_SUT) ? SUT_MAX_EGLIM : MAX_EGLIM;
-            if ((max_irtifa_degeri - irtifa > APOGEE_IRTIFA_FARKI) &&  // [BME280] A
-                (anlik_dikey_hiz < MIN_DIKEY_HIZ) &&                   // [BME280] B
+
+            // [ANA KRITER] Gercek ucus + SIT + SUT: irtifa dustu ve hiz negatif.
+            const bool apogee_dusus = (max_irtifa_degeri - irtifa > APOGEE_IRTIFA_FARKI) && // A
+                                      (anlik_dikey_hiz < MIN_DIKEY_HIZ);                    // B
+
+            // [SUT-ONLY] Duz plato tepesi: max_irtifa N ms'dir artmiyor.
+            // Gercek ucusta ve SIT'te bu ifade DAIMA false — yol degismez.
+            // Ucuncu sart = "hala duz tepedeyim". Roket alcalmaya basladiysa bu
+            // kriter kendini devre disi birakir; karari orijinal 15 m kapisi verir.
+            const bool apogee_sut_plato =
+                (sitSutMod == MOD_SUT) &&
+                (max_irtifa_degeri > SUT_APOGEE_MIN_IRTIFA) &&
+                (max_irtifa_degeri - irtifa < SUT_APOGEE_PLATO_TOLERANS) &&
+                (sut_plato_ornek >= SUT_APOGEE_PLATO_ORNEK);
+
+            if ((apogee_dusus || apogee_sut_plato) &&
                 (eglim_acisi < egim_kapisi)) {                         // [BNO055] D - Güvenlik
                 Funye1Atesle(); // Drogue paraşüt → 1. Ayrılma
                 durum = INIS_1;
@@ -1013,7 +1114,8 @@ void Task1code(void *pvParameters) {
     // Bileske (toplam) ivme buyuklugu — core0'da hesaplanir, havadan tek slot ile gider.
     packet.ivmeToplam = sqrtf(ivmeX * ivmeX + ivmeY * ivmeY + ivmeZ * ivmeZ);
     packet.gyroX = gyroX; packet.gyroY = gyroY; packet.gyroZ = gyroZ;
-    packet.roll = roll; packet.pitch = pitch; packet.yaw = yaw;
+    packet.roll = roll; packet.pitch = pitch; packet.yaw = yaw;  // SD log icin
+    packet.qx = qx; packet.qy = qy; packet.qz = qz;              // havadan giden yonelim
     packet.irtifa = irtifa;
     packet.dikeyHiz = anlik_dikey_hiz; // Pakete dikey hızı ekle
     packet.eglimAcisi = eglim_acisi; // Pakete eğim açısını ekle
@@ -1126,6 +1228,13 @@ void Task2code(void *pvParameters) {
                           roll   = be32_to_float(&ttl_buf[21]);
                           pitch  = be32_to_float(&ttl_buf[25]);
                           yaw    = be32_to_float(&ttl_buf[29]);
+                          // SUT'ta 3D quaternion telemetrisi kullanilmaz -> kimlik (identity)
+                          // gonderilir. eglim_acisi yine enjekte roll/pitch'ten hesaplanir.
+                          qx = qy = qz = 0.0f;
+                          // Plato apogee dedektorunun ornek saati (bkz.
+                          // SUT_APOGEE_PLATO_ORNEK). EN SON artirilir ki Task1
+                          // sayaci gordugunde irtifa zaten yazilmis olsun.
+                          sut_veri_sayaci++;
                       }
                   }
               }

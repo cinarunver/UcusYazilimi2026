@@ -75,8 +75,8 @@
     "semantic_hash": ""
   },
   "src/main.cpp": {
-    "mtime": 1784725495.4493318,
-    "ast_hash": "2537d99ae662a72006a6fb4e7f3b46a7",
+    "mtime": 1784554282.1844623,
+    "ast_hash": "d6a005eff54a091beb6f6d0f1b850efa",
     "semantic_hash": ""
   },
   "test/test_ucus/test_main.cpp": {

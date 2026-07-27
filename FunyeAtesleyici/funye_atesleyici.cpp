@@ -2,12 +2,25 @@
 //  FÜNYE ATEŞLEYİCİ (Zamanlanmış) — Bağımsız Test / Gösterim Firmware'i
 //  Trakya Roket 2026 — Uçuş Yazılımı
 // ----------------------------------------------------------------------------
-//  AKIŞ:  Güç geldi (boot) → 10 sn bekle → LED yanar → 10 sn bekle → Fünye ateşlenir
-//  ATEŞLEME:  1 sn AÇIK / 1 sn KAPALI şeklinde 5 kez pals (5 açık pals).
+//  AKIŞ:  Güç geldi (boot) → 10 sn → LED yanar → 5 sn → 1. fünye (pin 27) 1 sn
+//         palslanır → (1. fünye ateşinden 5 sn sonra) 2. fünye (pin 14) 1 sn
+//         palslanır → kilitlenir.
+//         İki fünye ASLA aynı anda sürülmez: F1 palsı biter (high-Z), aradan
+//         geçer, sonra F2 ateşlenir.
 //  Sekans TEK SEFER çalışır, sonra kilitlenir.
+//
+//  Zaman çizelgesi (t=0 boot):
+//    t=10s  LED yanar
+//    t=15s  1. fünye (27) ateşlenir → 1 sn HIGH
+//    t=16s  1. fünye high-Z'ye döner
+//    t=20s  2. fünye (14) ateşlenir → 1 sn HIGH
+//    t=21s  2. fünye high-Z, BİTTİ (kilitli)
 //
 //  YÜKLEME:  pio run -e funye --target upload
 //  MONİTÖR:  pio device monitor -b 115200
+//
+//  GPIO:  Fünye ve LED pinleri ESP-IDF native sürücüsüyle (driver/gpio.h)
+//         yönetilir; Arduino pinMode/digitalWrite kullanılmaz.
 //
 //  !!! GÜVENLİK !!!
 //  Varsayılan FUNYE_GERCEK_ATES = 0 → SİMÜLE modu (fünye pini SÜRÜLMEZ).
@@ -16,121 +29,108 @@
 // ============================================================================
 
 #include <Arduino.h>
+#include "driver/gpio.h"
 
 // ── GÜVENLİK ANAHTARI ───────────────────────────────────────────────────────
 #define FUNYE_GERCEK_ATES   1     // 0 = SİMÜLE (pin sürülmez, güvenli) | 1 = GERÇEK ateşleme
 
+// ── GEÇİCİ TEST BAYRAĞI ─────────────────────────────────────────────────────
+// 1 = pin 14 (PIN_FUNYE_2) setup'ta OUTPUT yapılıp LOW'a sürülür — boot'taki
+//     HIGH'ı aktif bastırma denemesi.
+// !!! UYARI: Bu, güvenlik banner'ındaki "funye pinini setup'ta OUTPUT YAPMA"
+// kuralını BİLEREK deler. Bu kartta pin OUTPUT'a geçince ateşleme olduğu
+// gözlendi — yani bu blok pin 14'teki fünyeyi BOOT'ta ateşleyebilir. SADECE
+// pin 14'te CANLI FÜNYE YOKKEN dene. Test bitince tekrar 0 yap.
+#define TEST_PIN14_SETUP_OUTPUT   1
+
 // ── Pinler (ana uçuş yazılımıyla aynı) ──────────────────────────────────────
-#define PIN_FUNYE   14            // Fünye / MOSFET çıkışı (main.cpp PIN_FUNYE_1)
-#define PIN_LED     25            // LED çıkışı           (main.cpp PIN_LED)
+#define PIN_FUNYE_1 27            // 1. fünye / MOSFET çıkışı (main.cpp PIN_FUNYE_1)
+#define PIN_FUNYE_2 14            // 2. fünye / MOSFET çıkışı (main.cpp PIN_FUNYE_2)
+#define PIN_LED     25            // LED çıkışı               (main.cpp PIN_LED)
 
 // ── Zamanlama sabitleri ─────────────────────────────────────────────────────
-#define BASLANGIC_SABITLEME_MS  1000UL    // Boot'ta pin LOW garanti bekleme
-#define LED_GECIKME_MS         1000UL    // Güç → LED arası bekleme
-#define FUNYE_GECIKME_MS       10000UL    // LED → fünye arası bekleme
-#define FUNYE_PALS_SAYISI          5      // Kaç kez ateşleme palsı
-#define FUNYE_ACIK_MS           5000UL    // Her palsta pin HIGH kalma süresi
-#define FUNYE_KAPALI_MS         5000UL    // Palslar arası pin LOW süresi
+#define BASLANGIC_SABITLEME_MS  1000UL     // Boot'ta pin high-Z garanti bekleme
+#define LED_GECIKME_MS         20000UL     // Güç → LED arası bekleme (20 sn)
+#define F1_GECIKME_MS          10000UL     // LED → 1. fünye arası bekleme (10 sn)
+#define F1_F2_ARASI_MS          5000UL     // 1. fünye ateşi → 2. fünye ateşi arası (5 sn)
+#define FUNYE_PALS_MS           1000UL     // Her fünye pininin HIGH kalma süresi (1 sn)
 
 // ── Durum makinesi ──────────────────────────────────────────────────────────
 enum Durum {
-    BEKLE_LED,        // Güç geldi, LED gecikmesi sayılıyor
-    LED_YANDI_BEKLE,  // LED yandı, fünye gecikmesi sayılıyor
-    ATESLE,           // Fünye palsı aktif
-    BITTI             // Sekans tamamlandı, kilitli
+    BEKLE_LED,     // Güç geldi, LED gecikmesi sayılıyor
+    BEKLE_F1,      // LED yandı, 1. fünye gecikmesi sayılıyor
+    F1_ACIK,       // 1. fünye HIGH (pals sürüyor)
+    BEKLE_F2,      // 1. fünye high-Z'de, 2. fünye ateş anı bekleniyor
+    F2_ACIK,       // 2. fünye HIGH (pals sürüyor)
+    BITTI          // Sekans tamamlandı, kilitli
 };
 
 Durum durum = BEKLE_LED;
-unsigned long asama_baslangic  = 0;    // Aktif aşamanın başladığı an (millis)
-unsigned long pals_gecis       = 0;    // Son pals AÇIK/KAPALI geçişinin anı
-unsigned long son_log          = 0;    // Geri sayım logu için
-int  funye_pals_no             = 0;    // Tamamlanan AÇIK pals sayısı
-bool funye_pin_acik            = false; // Şu an fünye pini HIGH mı
-bool atesleme_yapildi          = false; // Tek atış kilidi
+unsigned long asama_baslangic = 0;   // Aktif aşamanın başladığı an (millis)
+unsigned long f1_ates_ani     = 0;   // 1. fünyenin ateşlendiği an (F2 zamanlaması için)
+unsigned long pals_baslangic  = 0;   // Aktif fünye palsının başladığı an
+unsigned long son_log         = 0;   // Geri sayım logu için
 
 // ============================================================================
 //  *** FUNYE PIN GUVENLIGI — BU FONKSIYON ASLA VE ASLA DEGISTIRILMEYECEK ***
 // ============================================================================
-// KURAL: PIN_FUNYE setup()'ta OUTPUT YAPILMAZ. Pin OUTPUT'a yalnizca HIGH
+// KURAL: Funye pinleri setup()'ta OUTPUT YAPILMAZ. Pin OUTPUT'a yalnizca HIGH
 // yazilacagi an gecer; LOW yazilirken high-Z'ye (INPUT) geri birakilir. Boylece
 // palslar arasinda ve sekans bitince pin surulmez halde kalir.
 //
 // NEDEN (dokunmadan once oku):
 //  1) Boot/reset sirasinda ESP32 pinleri high-Z'dir. setup()'ta OUTPUT yapmak
-//     pini surulur hale getirir; o andan itibaren tek bir hatali digitalWrite
+//     pini surulur hale getirir; o andan itibaren tek bir hatali cikis
 //     (bozuk bellek, kacak kod yolu, brown-out sonrasi yarim reset) gercek
-//     funyeyi ateslemeye yeter.
+//     funyeyi ateslemeye yeter. DAHA KOTUSU: bu kartta atesleme HIGH seviyede
+//     degil, pin OUTPUT'a GECER GECMEZ olur. Yani pini kazara OUTPUT yapmak =
+//     dogrudan atesleme. Bu yuzden pin default high-Z kalmali, OUTPUT'a yalniz
+//     bilincli atesleme aninda gecmeli.
 //  2) High-Z'de MOSFET gate'ini harici pull-down GND'ye kilitler — yazilim ne
 //     yaparsa yapsin fiziksel olarak akim akmaz. Yazilim hatasi donanim
-//     guvenligini asamaz.
-//  3) Bu sketch tek isi funye atesleme olan, tezgahta insan yanindayken
-//     calisan bir sketch. Buraya pinMode(PIN_FUNYE, OUTPUT) satirini setup'a
-//     tasima veya kalici OUTPUT'a cevirme.
+//     guvenligini asamaz. Ek emniyet olarak high-Z'de dahili pull-down da acilir.
+//  3) Bu sketch tek isi funye atesleme olan, tezgahta insan yanindayken calisan
+//     bir sketch. Buraya funye pinini setup'ta OUTPUT yapan bir satir EKLEME.
+//  4) Iki funye asla ayni anda HIGH olmaz; F1 palsi biter (high-Z), aradan gecer,
+//     sonra F2 ateslenir.
 //
-// Sira onemli: HIGH'ta once digitalWrite(LOW) sonra pinMode(OUTPUT) — ters
-// sira, OUTPUT'a gecis aninda registerde kalmis eski HIGH'i pine basar.
-// Bu davranis src/main.cpp ile ayni mantiktadir.
+// NATIVE GPIO (driver/gpio.h) NOTLARI:
+//  - Ates: once gpio_set_level(pin,0), sonra gpio_config(mode=OUTPUT). OUTPUT'a
+//    gecis registerdeki 0'i basar (glitch olmaz), ardindan gpio_set_level(pin,1).
+//    Sira onemli: once level=0, sonra yon degisimi.
+//  - Guvenli: gpio_set_level(pin,0) + gpio_config(mode=INPUT) → high-Z.
+//  - gpio_reset_pin() KULLANILMAZ: o pini dahili PULL-UP ile birakir; bir MOSFET
+//    gate'inde pull-up gate'i HIGH'a cekmeye calisir = tehlike. Onun yerine acikca
+//    gpio_config ile pull-up KAPALI / pull-down ACIK yapiyoruz.
 // ============================================================================
 // SİMÜLE modunda pin sürülmez; GERÇEK modda fünye pinini yazar.
-void FunyePinYaz(int seviye) {
+void FunyePinYaz(int pin, int seviye) {
 #if FUNYE_GERCEK_ATES
     if (seviye == HIGH) {
-        digitalWrite(PIN_FUNYE, LOW);       // OUTPUT'a gecerken glitch olmasin
-        pinMode(PIN_FUNYE, OUTPUT | PULLDOWN);
-        digitalWrite(PIN_FUNYE, HIGH);
+        gpio_set_level((gpio_num_t)pin, 0);         // OUTPUT'a gecerken glitch olmasin
+        gpio_config_t io = {
+            .pin_bit_mask = 1ULL << pin,
+            .mode         = GPIO_MODE_OUTPUT,
+            .pull_up_en   = GPIO_PULLUP_DISABLE,
+            .pull_down_en = GPIO_PULLDOWN_ENABLE,
+            .intr_type    = GPIO_INTR_DISABLE,
+        };
+        gpio_config(&io);                           // <-- ATES burada (OUTPUT'a gecis)
+        gpio_set_level((gpio_num_t)pin, 1);
     } else {
-        digitalWrite(PIN_FUNYE, LOW);       // cikis registerini once temizle
-        pinMode(PIN_FUNYE, INPUT);          // high-Z — surucu tamamen devre disi
+        gpio_set_level((gpio_num_t)pin, 0);         // cikis registerini once temizle
+        gpio_config_t io = {
+            .pin_bit_mask = 1ULL << pin,
+            .mode         = GPIO_MODE_INPUT,        // high-Z — surucu tamamen devre disi
+            .pull_up_en   = GPIO_PULLUP_DISABLE,
+            .pull_down_en = GPIO_PULLDOWN_ENABLE,   // ek emniyet: gate GND'ye cekilir
+            .intr_type    = GPIO_INTR_DISABLE,
+        };
+        gpio_config(&io);
     }
 #else
-    (void)seviye;                       // SİMÜLE: pin sürülmez
+    (void)pin; (void)seviye;            // SİMÜLE: pin sürülmez
 #endif
-}
-
-// ── Non-Blocking fünye ateşleme (pals dizisi) ───────────────────────────────
-// 1 sn AÇIK / 1 sn KAPALI şeklinde FUNYE_PALS_SAYISI kadar pals başlatır.
-void FunyeAtesle() {
-    if (atesleme_yapildi) return;       // Çift ateşlemeyi engelle
-    atesleme_yapildi = true;
-    funye_pals_no  = 0;
-    funye_pin_acik = true;
-    pals_gecis     = millis();
-    FunyePinYaz(HIGH);
-#if FUNYE_GERCEK_ATES
-    Serial.printf(">>> FÜNYE ATEŞLEME BAŞLADI (GERÇEK) — %d pals, 1s AÇIK / 1s KAPALI\n", FUNYE_PALS_SAYISI);
-#else
-    Serial.printf(">>> FÜNYE ATEŞLEME BAŞLADI (SİMÜLE) — %d pals, 1s AÇIK / 1s KAPALI\n", FUNYE_PALS_SAYISI);
-#endif
-    Serial.println("Pals 1 -> AÇIK");
-}
-
-// Pals dizisini yürütür (her döngüde çağrılır). 5. palstan sonra kilitlenir.
-void FunyeGuncelle() {
-    if (durum != ATESLE) return;
-    unsigned long simdi = millis();
-
-    if (funye_pin_acik) {
-        // AÇIK faz doldu → pini kapat
-        if (simdi - pals_gecis >= FUNYE_ACIK_MS) {
-            FunyePinYaz(LOW);
-            funye_pin_acik = false;
-            funye_pals_no++;
-            pals_gecis = simdi;
-            Serial.printf("Pals %d -> KAPALI\n", funye_pals_no);
-            if (funye_pals_no >= FUNYE_PALS_SAYISI) {
-                Serial.println("Tüm palslar tamam. Sekans BİTTİ.");
-                durum = BITTI;          // pin LOW durumda kilitlenir (güvenli)
-            }
-        }
-    } else {
-        // KAPALI faz doldu → sonraki palsı aç
-        if (funye_pals_no < FUNYE_PALS_SAYISI && (simdi - pals_gecis >= FUNYE_KAPALI_MS)) {
-            FunyePinYaz(HIGH);
-            funye_pin_acik = true;
-            pals_gecis = simdi;
-            Serial.printf("Pals %d -> AÇIK\n", funye_pals_no + 1);
-        }
-    }
 }
 
 // Saniyede bir geri sayım logu basar
@@ -144,11 +144,48 @@ void GeriSayimLog(const char* etiket, unsigned long gecen, unsigned long toplam)
 }
 
 void setup() {
-    // --- GÜVENLİK: İlk iş fünye pinini güvenli (LOW) hale getirmek ---
+    // --- GÜVENLİK: İLK İŞ — fünye pinlerini güvenli high-Z'ye al ---
+    // Yazılımın erişebildiği en erken an. Pini INPUT + dahili pull-down yapar
+    // (OUTPUT DEĞİL — yani ateşlemez), setup sonrası zayıf LOW'a çeker.
+    //
+    // !!! ÖNEMLİ SINIR !!! Bu satırlar pin 14'ün (GPIO14) AÇILIŞTAKI HIGH'ını
+    // ENGELLEMEZ. GPIO14, ROM bootloader'ının dahili pull-up ile bıraktığı bir
+    // pindir; o zayıf HIGH bu kod çalışmadan ÖNCE, boot'un ilk ~yüz ms'inde olur.
+    // setup()'a ne yazılırsa yazılsın o pencereyi kapatamaz. Boot HIGH'ını
+    // yalnızca gate'teki HARİCİ PULL-DOWN direnci güvenceye alır (ROM'un ~45kΩ
+    // zayıf pull-up'ını yener). Buradaki satır sadece setup SONRASI durum içindir.
+    // SİMÜLE modunda no-op.
+    FunyePinYaz(PIN_FUNYE_1, LOW);
+    FunyePinYaz(PIN_FUNYE_2, LOW);
 
+#if TEST_PIN14_SETUP_OUTPUT
+    // *** GEÇİCİ TEST — güvenlik kuralını BİLEREK deliyor (bkz. TEST_PIN14_SETUP_OUTPUT) ***
+    // Pin 14'ü OUTPUT yapıp LOW'a sürer: boot HIGH'ını aktif bastırma denemesi.
+    // DİKKAT: OUTPUT'a geçiş bu kartta ateşleme tetikleyebilir — canlı fünye bağlıyken ÇALIŞTIRMA.
+    {
+        gpio_set_level((gpio_num_t)PIN_FUNYE_2, 0);   // önce çıkış registerini temizle
+        gpio_config_t test14 = {
+            .pin_bit_mask = 1ULL << PIN_FUNYE_2,
+            .mode         = GPIO_MODE_OUTPUT,          // <-- pin 14 OUTPUT (test)
+            .pull_up_en   = GPIO_PULLUP_DISABLE,
+            .pull_down_en = GPIO_PULLDOWN_ENABLE,
+            .intr_type    = GPIO_INTR_DISABLE,
+        };
+        gpio_config(&test14);
+        gpio_set_level((gpio_num_t)PIN_FUNYE_2, 0);   // pin 14'ü LOW'a sür (bastır)
+    }
+#endif
 
-    pinMode(PIN_LED, OUTPUT);
-    digitalWrite(PIN_LED, LOW);
+    // --- LED çıkışı (native) ---
+    gpio_config_t led = {
+        .pin_bit_mask = 1ULL << PIN_LED,
+        .mode         = GPIO_MODE_OUTPUT,
+        .pull_up_en   = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type    = GPIO_INTR_DISABLE,
+    };
+    gpio_config(&led);
+    gpio_set_level((gpio_num_t)PIN_LED, 0);
 
     Serial.begin(115200);
     delay(50);
@@ -160,10 +197,12 @@ void setup() {
 #else
     Serial.println("MOD: SİMÜLE (güvenli) — fünye pini sürülmeyecek");
 #endif
-    Serial.printf("Akış: guc -> %lus -> LED -> %lus -> funye (%d pals, 1s ac / 1s kapa)\n",
-                  LED_GECIKME_MS / 1000, FUNYE_GECIKME_MS / 1000, FUNYE_PALS_SAYISI);
+    Serial.printf("Akis: guc -> %lus -> LED -> %lus -> F1(pin %d) %lums pals -> +%lus -> F2(pin %d) %lums pals\n",
+                  LED_GECIKME_MS / 1000, F1_GECIKME_MS / 1000, PIN_FUNYE_1, FUNYE_PALS_MS,
+                  F1_F2_ARASI_MS / 1000, PIN_FUNYE_2, FUNYE_PALS_MS);
+    Serial.printf("Pinler: FUNYE_1=%d  FUNYE_2=%d  LED=%d\n", PIN_FUNYE_1, PIN_FUNYE_2, PIN_LED);
 
-    // --- Başlangıç sabitleme: pin LOW garanti, sonra sayaç başlar ---
+    // --- Başlangıç sabitleme: pin high-Z garanti, sonra sayaç başlar ---
     delay(BASLANGIC_SABITLEME_MS);
     asama_baslangic = millis();
     son_log = millis();
@@ -171,34 +210,67 @@ void setup() {
 }
 
 void loop() {
-    FunyeGuncelle();   // Süresi dolan palsı kapat
+    unsigned long simdi = millis();
 
     switch (durum) {
         case BEKLE_LED: {
-            unsigned long gecen = millis() - asama_baslangic;
+            unsigned long gecen = simdi - asama_baslangic;
             GeriSayimLog("LED bekleniyor...", gecen, LED_GECIKME_MS);
             if (gecen >= LED_GECIKME_MS) {
-                digitalWrite(PIN_LED, HIGH);
-                Serial.println("LED YANDI. Funye geri sayimi basladi.");
-                durum = LED_YANDI_BEKLE;
-                asama_baslangic = millis();
+                gpio_set_level((gpio_num_t)PIN_LED, 1);
+                Serial.println("LED YANDI. 1. funye geri sayimi basladi.");
+                durum = BEKLE_F1;
+                asama_baslangic = simdi;
             }
             break;
         }
 
-        case LED_YANDI_BEKLE: {
-            unsigned long gecen = millis() - asama_baslangic;
-            GeriSayimLog("Funye bekleniyor...", gecen, FUNYE_GECIKME_MS);
-            if (gecen >= FUNYE_GECIKME_MS) {
-                FunyeAtesle();
-                durum = ATESLE;
+        case BEKLE_F1: {
+            unsigned long gecen = simdi - asama_baslangic;
+            GeriSayimLog("1. funye bekleniyor...", gecen, F1_GECIKME_MS);
+            if (gecen >= F1_GECIKME_MS) {
+                FunyePinYaz(PIN_FUNYE_1, HIGH);
+                f1_ates_ani    = simdi;
+                pals_baslangic = simdi;
+                durum = F1_ACIK;
+                Serial.printf(">>> 1. FUNYE (pin %d) ATESLENDI -> %lu ms pals\n", PIN_FUNYE_1, FUNYE_PALS_MS);
             }
             break;
         }
 
-        case ATESLE:
-            // Pals FunyeGuncelle() tarafından kapatılır; burada beklenir.
+        case F1_ACIK: {
+            // Pals süresi dolunca 1. fünyeyi high-Z'ye al (kapat)
+            if (simdi - pals_baslangic >= FUNYE_PALS_MS) {
+                FunyePinYaz(PIN_FUNYE_1, LOW);
+                Serial.println("1. funye high-Z (kapali).");
+                durum = BEKLE_F2;
+            }
             break;
+        }
+
+        case BEKLE_F2: {
+            // 2. fünye, 1. fünyenin ateşlendiği andan F1_F2_ARASI_MS sonra ateşlenir.
+            // (F1 palsı zaten bittiği için iki pin asla aynı anda HIGH olmaz.)
+            unsigned long gecen = simdi - f1_ates_ani;
+            GeriSayimLog("2. funye bekleniyor...", gecen, F1_F2_ARASI_MS);
+            if (gecen >= F1_F2_ARASI_MS) {
+                FunyePinYaz(PIN_FUNYE_2, HIGH);
+                pals_baslangic = simdi;
+                durum = F2_ACIK;
+                Serial.printf(">>> 2. FUNYE (pin %d) ATESLENDI -> %lu ms pals\n", PIN_FUNYE_2, FUNYE_PALS_MS);
+            }
+            break;
+        }
+
+        case F2_ACIK: {
+            // Pals süresi dolunca 2. fünyeyi high-Z'ye al ve sekansı kilitle
+            if (simdi - pals_baslangic >= FUNYE_PALS_MS) {
+                FunyePinYaz(PIN_FUNYE_2, LOW);
+                Serial.println("2. funye high-Z (kapali). Sekans BITTI (iki pin de guvenli).");
+                durum = BITTI;
+            }
+            break;
+        }
 
         case BITTI:
             // Boşta, kilitli. Sekans tekrar çalışmaz.
