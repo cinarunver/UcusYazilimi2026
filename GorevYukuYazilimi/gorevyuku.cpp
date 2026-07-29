@@ -36,6 +36,17 @@
 #define BEACON_BIP_MS       200   // ms - beacon "acik" suresi
 #define BEACON_PERIYOT_MS  1000   // ms - beacon periyodu (BIP_MS acik + kalani sonuk)
 
+// --- SUREKLI BEACON MODU (durum makinesi YOK) ---
+// 1 -> Karta elektrik gelir gelmez buzzer + beacon LED (PIN_LED) biper.
+//      uctu/indi tespitine HIC bakilmaz; setup bloke olsa (SD/BME/BNO bekleme,
+//      hatta BME bulunamayip sonsuz doguye girse) bile bipleme durmaz, cunku
+//      is en basta ayri bir FreeRTOS task'ina verilir.
+//      Bu modda buzzer+beacon LED SADECE o task tarafindan surulur;
+//      beacon_guncelle() ve led_uygula() bu iki cikisa dokunmaz.
+//      3 durum LED'i (26/4/25) normal davranisini korur, telemetri/SD/LoRa aynen calisir.
+// 0 -> Normal davranis: beacon yalniz indi=true olunca calisir.
+#define BEACON_HEP_ACIK     1
+
 // Gorev yukunun 4 gosterge cikisi: 3 durum LED'i (26/4/25) + kurtarma beacon LED'i (13)
 struct LedDurumBgy { bool led1; bool led2; bool led3; bool beacon; };
 
@@ -105,8 +116,8 @@ static inline LedDurumBgy hesapla_led_durumu_bgy(bool sistem_hazir, bool uctu,
 #define PIN_SDKART_DET 35
 #define LORA_M0 15
 #define LORA_M1 2
-#define PIN_BUZZER 13   // Kurtarma beacon buzzer (main ile ayni)
-#define PIN_LED 12      // Kurtarma beacon LED (main ile ayni)
+#define PIN_BUZZER 27  // Kurtarma beacon buzzer (main ile ayni)
+#define PIN_LED 14      // Kurtarma beacon LED (main ile ayni)
 #define PIN_LED_1 26    // Durum gosterge LED 1 (UKB ile ayni pin)
 #define PIN_LED_2 4     // Durum gosterge LED 2
 #define PIN_LED_3 25    // Durum gosterge LED 3
@@ -166,12 +177,35 @@ class SimpleKalmanFilter {
     bool  first_run;
 };
 
-// BME280 icin Kalman filtreleri (IMU filtreleri YOK)
+// BME280 icin Kalman filtreleri
 // NOT: irtifa apogee icin kullanilmadigindan hafif tutuldu (main'deki agir 16.3 DEGIL).
 SimpleKalmanFilter kf_basinc(2.0, 2.0, 0.1);
 SimpleKalmanFilter kf_sicaklik(0.5, 0.5, 0.01);
 SimpleKalmanFilter kf_nem(1.0, 1.0, 0.1);
 SimpleKalmanFilter kf_irtifa(1.5, 1.5, 0.1);
+
+// IMU (BNO055) icin Kalman filtreleri — parametreler main.cpp (UKB) ile birebir.
+// Havadan giden bileske ivme bu FILTRELENMIS eksenlerden hesaplanir.
+SimpleKalmanFilter kf_ivmeX(2.906, 9.982, 0.3884);
+SimpleKalmanFilter kf_ivmeY(2.906, 9.982, 0.3884);
+SimpleKalmanFilter kf_ivmeZ(2.906, 9.982, 0.3884);
+SimpleKalmanFilter kf_gyroX(2.906, 9.982, 0.3884);
+SimpleKalmanFilter kf_gyroY(2.906, 9.982, 0.3884);
+SimpleKalmanFilter kf_gyroZ(2.906, 9.982, 0.3884);
+
+// --- GPS icin Kalman (OLCEKLI DOMEN — dogrudan dereceye uygulanamaz) ---
+// GPS derecesi cok kucuk adimlarla degisir (1e-5 derece ~ 1.1 m). Filtre dogrudan
+// dereceye uygulanirsa |last_estimate - current| terimi ~1e-6 kalir, err_estimate
+// sifira coker, kalman_gain 0'a gider ve filtre ILK FIX'TE DONAR — konumu bir daha
+// takip etmez. Bu yuzden ilk fix referans alinir ve referansa gore x1e5 olceklenmis
+// (~metre mertebesi) domende filtrelenir; cikis tekrar dereceye cevrilir.
+// Ayrica filtre YALNIZ yeni fix geldiginde guncellenir (100 Hz'te ayni degeri tekrar
+// tekrar beslemek de err_estimate'i sifira cokertirdi).
+#define GPS_KALMAN_OLCEK 1e5
+SimpleKalmanFilter kf_gpsEnlem(3.0, 3.0, 0.3);   // ~3 m olcum belirsizligi
+SimpleKalmanFilter kf_gpsBoylam(3.0, 3.0, 0.3);
+double gps_ref_enlem = 0.0, gps_ref_boylam = 0.0;
+bool   gps_ref_set   = false;
 
 // --- Sensor nesneleri ---
 Adafruit_BME280 bme;
@@ -201,32 +235,82 @@ float anlik_dikey_hiz = 0.0;
 #pragma pack(push, 1)
 struct GorevYukuPaket {
     float basinc, sicaklik, nem, irtifa;   // BME280 (basinc hPa)
+    float es, pv;                          // Tetens ara degerleri (hPa) — YALNIZ SD, havadan gitmez
+    float yogunluk;                        // nemli hava yogunlugu (kg/m^3)
     float gpsEnlem, gpsBoylam;             // GPS
     float ivmeX, ivmeY, ivmeZ;             // BNO055 lineer ivme (m/s^2)
     float ivmeToplam;                      // bileske ivme = sqrt(x^2+y^2+z^2) (core0'da hesaplanir)
+    float qx, qy, qz;                      // BNO055 yonelim quaternion (w>=0 normalize)
     float gyroX, gyroY, gyroZ;             // BNO055 gyro (rad/s)
-};  // 13 float = 52 byte
+    uint32_t zaman_ms;                     // millis() — SD log zaman ekseni (havadan gitmez)
+};
 #pragma pack(pop)
 
-// --- HAVADAN GİDEN FIXED-POINT WIRE PAKET (24 byte) ---
-// GorevYukuPaket (float, 52B) yalniz queue + SD icin; LoRa'ya giderken bu
+// --- HAVADAN GİDEN FIXED-POINT WIRE PAKET (32 byte) ---
+// GorevYukuPaket (float) yalniz queue + SD icin; LoRa'ya giderken bu
 // packed int wire pakete quantize edilir (paket kucultme). Little-endian.
-// Yer istasyonu Python format: '<HhHh2i4h'.
-// Olcekler: basinc hPa x10, sicaklik x100, nem x100, irtifa x10, GPS x1e7,
-//           ivme x100, gyro x10.
+// Yer istasyonu Python format: '<HhHhH2i7h'.
+// Olcekler: basinc hPa x10, sicaklik x100, nem x100, irtifa x10, yogunluk x1000,
+//           GPS x1e7, ivme x100, quaternion x10000, gyro x10.
 // NOT: ivmeX/Y/Z tek tek havadan GONDERILMEZ; yerine bileske (toplam) ivme
-//      tek int16 slot ile gider (28B->24B). Ham 3 eksen SD'de tam float kalir.
+//      tek int16 slot ile gider. 3 eksen ayri ayri SD'de tam float kalir.
+// NOT: es/pv (Tetens ara degerleri) havadan GITMEZ — basinc/sicaklik/nem zaten
+//      pakette oldugundan yerde birebir turetilebilirler.
+// NOT: yonelim Euler yerine quaternion gider (gimbal lock yok); w yer istasyonunda
+//      w=sqrt(1-x^2-y^2-z^2) ile geri hesaplanir (firmware w>=0 garanti eder).
+// NOT: pakete giren TUM alanlar Kalman'dan gecer (BME280 + IMU + GPS).
 #pragma pack(push, 1)
 struct GorevYukuWire {
     uint16_t basinc;
     int16_t  sicaklik;
     uint16_t nem;
     int16_t  irtifa;
+    uint16_t yogunluk;                      // nemli hava yogunlugu x1000 (kg/m^3)
     int32_t  gpsEnlem, gpsBoylam;
     int16_t  ivmeToplam;                    // bileske ivme buyuklugu sqrt(x^2+y^2+z^2)
+    int16_t  qx, qy, qz;                    // yonelim quaternion x10000 (w>=0)
     int16_t  gyroX, gyroY, gyroZ;
 };
 #pragma pack(pop)
+
+// ============================================================
+//  HAVA YOGUNLUGU — NEMLI HAVA (Tetens + kismi basinclar)
+// ============================================================
+// Kuru hava ve su buhari ideal gaz olarak ayri ayri ele alinir; toplam yogunluk
+// iki kismi yogunlugun toplamidir. Nem ihmal edilirse (kuru hava kabulu) yaz
+// gununde ~%1 hata olusur — bilimsel gorev yuku icin dogru olan nemli hava.
+//   es(T) = 6.1078 * 10^(7.5T/(T+237.3))   [hPa]  Tetens (su uzeri)
+//   pv    = (RH/100) * es                  [hPa]  kismi buhar basinci
+//   pd    = p - pv                         [hPa]  kuru hava kismi basinci
+//   rho   = pd*100/(Rd*Tk) + pv*100/(Rv*Tk)       Tk = T+273.15
+#define GAZ_SABITI_KURU   287.058f   // J/(kg·K) kuru hava ozgul gaz sabiti
+#define GAZ_SABITI_BUHAR  461.495f   // J/(kg·K) su buhari ozgul gaz sabiti
+
+// Doymus buhar basinci (Tetens). T: °C -> donus: hPa
+static inline float tetens_es(float t_c) {
+    float payda = t_c + 237.3f;
+    if (fabsf(payda) < 1e-3f) return 0.0f;          // fiziksel olarak imkansiz; sifira bolme korumasi
+    return 6.1078f * powf(10.0f, (7.5f * t_c) / payda);
+}
+
+// Nemli hava yogunlugu. p: hPa, t_c: °C, rh_pct: %  -> donus: kg/m^3
+// es_out / pv_out: Tetens ara degerleri (SD logu icin; NULL verilebilir)
+static inline float hesapla_hava_yogunlugu(float p_hpa, float t_c, float rh_pct,
+                                           float* es_out, float* pv_out) {
+    float es = tetens_es(t_c);
+    float rh = rh_pct;
+    if (rh < 0.0f)   rh = 0.0f;                     // bozuk sensor -> fiziksel araliga kirp
+    if (rh > 100.0f) rh = 100.0f;
+    float pv = (rh / 100.0f) * es;
+    if (pv > p_hpa) pv = p_hpa;                     // pv toplam basinci asamaz (negatif pd olmasin)
+    float pd = p_hpa - pv;
+    float tk = t_c + 273.15f;
+    if (tk < 1.0f) tk = 1.0f;                       // sifira/negatife bolme korumasi
+    if (es_out) *es_out = es;
+    if (pv_out) *pv_out = pv;
+    return (pd * 100.0f) / (GAZ_SABITI_KURU  * tk)
+         + (pv * 100.0f) / (GAZ_SABITI_BUHAR * tk);
+}
 
 // SD ping-pong buffer
 #define SD_DMA_BUF_SIZE 512
@@ -236,10 +320,27 @@ volatile int active_sd_buf = 0;
 volatile int sd_buf_idx = 0;
 
 QueueHandle_t telemetryQueue;
-// SD kart log dosya adi — bu karta ozel (2. gorev yuku kartina basarken gy_2 yap)
-#define LOG_DOSYA_ADI "/gy_1.csv"
+// SD kart log dosyasi — HER UCUSTA YENI DOSYA:
+//   /gy_log.csv, /gy_log1.csv, /gy_log2.csv ...
+// Acilista ilk bos isim secilir; boylece onceki ucusun logu ustune yazilmaz ve
+// ucuslar birbirine karismaz. Secilen ad LoRa'dan yayinlanir (yerden gorulur).
+#define LOG_DOSYA_ONEK "/gy_log"
+#define LOG_DOSYA_MAX  999
+char log_dosya_adi[24] = LOG_DOSYA_ONEK ".csv";
 File logFile;
 bool sdOk = false;
+
+// Ilk kullanilmamis log dosyasi adini secer. Hepsi doluysa false doner ve
+// out sonuncuyu tutar (log kaybetmektense son dosyaya eklemeye devam et).
+static bool log_dosyasi_sec(char* out, size_t out_len) {
+    snprintf(out, out_len, "%s.csv", LOG_DOSYA_ONEK);
+    if (!SD.exists(out)) return true;
+    for (int i = 1; i <= LOG_DOSYA_MAX; i++) {
+        snprintf(out, out_len, "%s%d.csv", LOG_DOSYA_ONEK, i);
+        if (!SD.exists(out)) return true;
+    }
+    return false;
+}
 
 // --- CRC16-CCITT (main.cpp ile birebir) ---
 uint16_t crc16_ccitt(const uint8_t* data, size_t len) {
@@ -260,6 +361,8 @@ uint16_t crc16_ccitt(const uint8_t* data, size_t len) {
 #define WIRE_OLCEK_IVME   100.0f    // m/s^2 x100
 #define WIRE_OLCEK_GYRO    10.0f    // dps/rad-s x10
 #define WIRE_OLCEK_GPS     1e7      // derece x1e7 (int32)
+#define WIRE_OLCEK_YOGUN 1000.0f    // kg/m^3 x1000 (uint16) -> 0..65.535, cozunurluk 0.001
+#define WIRE_OLCEK_QUAT 10000.0f    // quaternion bileseni [-1,1] x10000 (int16, w>=0)
 
 static inline int16_t q16(float v, float scale) {
     float x = roundf(v * scale);
@@ -286,21 +389,49 @@ static inline void pack_gorevyuku_wire(GorevYukuWire& w, const GorevYukuPaket& p
     w.sicaklik = q16(p.sicaklik,  WIRE_OLCEK_SICAK);
     w.nem      = qu16(p.nem,      WIRE_OLCEK_NEM);
     w.irtifa   = q16(p.irtifa,    WIRE_OLCEK_IRTIFA);
+    w.yogunluk = qu16(p.yogunluk, WIRE_OLCEK_YOGUN);    // nemli hava yogunlugu (es/pv yalniz SD'de)
     w.gpsEnlem  = q32(p.gpsEnlem,  WIRE_OLCEK_GPS);
     w.gpsBoylam = q32(p.gpsBoylam, WIRE_OLCEK_GPS);
-    w.ivmeToplam = q16(p.ivmeToplam, WIRE_OLCEK_IVME);  // bileske ivme; ham eksenler havadan gitmez
+    w.ivmeToplam = q16(p.ivmeToplam, WIRE_OLCEK_IVME);  // bileske ivme; eksenler tek tek havadan gitmez
+    w.qx = q16(p.qx, WIRE_OLCEK_QUAT);                  // yonelim quaternion (gimbal lock'suz 3D)
+    w.qy = q16(p.qy, WIRE_OLCEK_QUAT);
+    w.qz = q16(p.qz, WIRE_OLCEK_QUAT);
     w.gyroX = q16(p.gyroX, WIRE_OLCEK_GYRO);
     w.gyroY = q16(p.gyroY, WIRE_OLCEK_GYRO);
     w.gyroZ = q16(p.gyroZ, WIRE_OLCEK_GYRO);
 }
 
+// --- CSV SAYI BICIMI: TURKCE EXCEL UYUMU ---
+// Ayrac ';' , ondalik ',' -> Turkce Excel'de cift tikla acilir, sutunlar ve
+// sayilar dogru gelir. Ayrac ';' oldugundan ondalik virgul ile cakismaz.
+// Python tarafi: pd.read_csv(f, sep=';', decimal=',')
+static inline void ondalik_virgulle(char* s, int len) {
+    for (int i = 0; i < len; i++) if (s[i] == '.') s[i] = ',';
+}
+
+#define GY_CSV_BASLIK "zaman_ms;basinc_hPa;sicaklik_C;nem_pct;irtifa_m;es_hPa;pv_hPa;" \
+                      "yogunluk_kgm3;gpsEnlem;gpsBoylam;ivmeX;ivmeY;ivmeZ;ivmeToplam;" \
+                      "qx;qy;qz;gyroX;gyroY;gyroZ"
+
 // --- BUFFERLI (PING-PONG) SD YAZMA ---
 void bufferla_ve_yaz_sd(File& file, const GorevYukuPaket& pkt) {
-    char temp_line[192];
+    char temp_line[320];
     int line_len = snprintf(temp_line, sizeof(temp_line),
-        "%.2f,%.2f,%.2f,%.2f,%.6f,%.6f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f\n",
-        pkt.basinc, pkt.sicaklik, pkt.nem, pkt.irtifa, pkt.gpsEnlem, pkt.gpsBoylam,
-        pkt.ivmeX, pkt.ivmeY, pkt.ivmeZ, pkt.gyroX, pkt.gyroY, pkt.gyroZ);
+        "%lu;%.2f;%.2f;%.2f;%.2f;%.3f;%.3f;%.4f;%.7f;%.7f;"
+        "%.2f;%.2f;%.2f;%.2f;%.4f;%.4f;%.4f;%.3f;%.3f;%.3f\n",
+        (unsigned long)pkt.zaman_ms,
+        pkt.basinc, pkt.sicaklik, pkt.nem, pkt.irtifa,
+        pkt.es, pkt.pv, pkt.yogunluk,
+        pkt.gpsEnlem, pkt.gpsBoylam,
+        pkt.ivmeX, pkt.ivmeY, pkt.ivmeZ, pkt.ivmeToplam,
+        pkt.qx, pkt.qy, pkt.qz,
+        pkt.gyroX, pkt.gyroY, pkt.gyroZ);
+
+    // snprintf kesme yaptiysa YAZILACAK degil YAZILABILECEK uzunlugu dondurur;
+    // kirpilmazsa asagidaki memcpy ping-pong tamponunun disina tasar.
+    if (line_len < 0) return;
+    if (line_len >= (int)sizeof(temp_line)) line_len = (int)sizeof(temp_line) - 1;
+    ondalik_virgulle(temp_line, line_len);
 
     char* current_buf = (active_sd_buf == 0) ? sd_dma_buf_A : sd_dma_buf_B;
     if (sd_buf_idx + line_len >= SD_DMA_BUF_SIZE) {
@@ -325,7 +456,7 @@ void sd_buffer_bosalt(File& file) {
 
 // --- CERCEVELI PAKET GONDERME (DMA DESTEKLI UART) ---
 // Float paket fixed-point wire pakete quantize edilir, sonra cerçevelenir.
-// Cerçeve: [0xAA][0x55][LEN=24][GorevYukuWire 24B][CRC16_HI][CRC16_LO] = 29B.
+// Cerçeve: [0xAA][0x55][LEN=32][GorevYukuWire 32B][CRC16_HI][CRC16_LO] = 37B.
 void gonder_paket_framed_dma(uart_port_t uart_num, const GorevYukuPaket& pkt) {
     static uint8_t frame_buf[64];
 
@@ -333,7 +464,7 @@ void gonder_paket_framed_dma(uart_port_t uart_num, const GorevYukuPaket& pkt) {
     pack_gorevyuku_wire(wire, pkt);
 
     const uint8_t* payload = (const uint8_t*)&wire;
-    const size_t   len     = sizeof(GorevYukuWire);   // 28
+    const size_t   len     = sizeof(GorevYukuWire);   // 32
     uint16_t       crc     = crc16_ccitt(payload, len);
 
     size_t idx = 0;
@@ -388,10 +519,30 @@ float hesapla_dikey_hiz(float guncel_irtifa) {
 // LED'ler (beacon LED 13 dahil) artik led_uygula() tarafindan surulur; buzzer ile
 // ayni millis() fazindan beslendikleri icin dogal senkron flash olur.
 void beacon_guncelle() {
+#if BEACON_HEP_ACIK
+    return;   // buzzer'i surekli beacon task'i suruyor - buradan dokunma
+#else
     if (!indi) { digitalWrite(PIN_BUZZER, LOW); return; }
     bool bip = (millis() % BEACON_PERIYOT_MS) < BEACON_BIP_MS;
     digitalWrite(PIN_BUZZER, bip ? HIGH : LOW);
+#endif
 }
+
+// --- SUREKLI BEACON TASK'I (BEACON_HEP_ACIK=1 iken) ---
+// setup()'in EN BASINDA baslatilir; buzzer + beacon LED'i durum makinesinden
+// tamamen bagimsiz olarak, ayni millis() fazindan biper.
+#if BEACON_HEP_ACIK
+void surekli_beacon_task(void *pvParameters) {
+    pinMode(PIN_BUZZER, OUTPUT);
+    pinMode(PIN_LED, OUTPUT);
+    for (;;) {
+        bool bip = (millis() % BEACON_PERIYOT_MS) < BEACON_BIP_MS;
+        digitalWrite(PIN_BUZZER, bip ? HIGH : LOW);
+        digitalWrite(PIN_LED,    bip ? HIGH : LOW);
+        vTaskDelay(10 / portTICK_PERIOD_MS);
+    }
+}
+#endif
 
 // --- LED GOSTERGE SURUCUSU (tek merkez: 3 durum LED'i 26/4/25 + beacon LED 13) ---
 // Karar mantigi yukaridaki gomulu saf fonksiyonda; burada sadece pinlere yazilir.
@@ -400,7 +551,9 @@ void led_uygula() {
     digitalWrite(PIN_LED_1, d.led1 ? HIGH : LOW);
     digitalWrite(PIN_LED_2, d.led2 ? HIGH : LOW);
     digitalWrite(PIN_LED_3, d.led3 ? HIGH : LOW);
-    digitalWrite(PIN_LED,   d.beacon ? HIGH : LOW);
+#if !BEACON_HEP_ACIK
+    digitalWrite(PIN_LED,   d.beacon ? HIGH : LOW);   // surekli beacon modunda bu pin task'in
+#endif
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -415,21 +568,56 @@ void Task1code(void *pvParameters) {
     nem      = kf_nem.updateEstimate(bme.readHumidity());
     irtifa   = kf_irtifa.updateEstimate(bme.readAltitude(referans_basinc));
 
-    // 2. GPS
+    // 1.5 NEMLI HAVA YOGUNLUGU — Kalman'dan gecmis basinc/sicaklik/nem uclusunden.
+    // Ikinci bir Kalman UYGULANMAZ: girdilerin ucu de zaten filtreli, turev degere
+    // ek filtre yalniz gecikme bindirir. es/pv ara degerleri SD logu icin saklanir.
+    float es_hpa = 0, pv_hpa = 0;
+    float yogunluk = hesapla_hava_yogunlugu(basinc, sicaklik, nem, &es_hpa, &pv_hpa);
+
+    // 2. GPS — filtre YALNIZ yeni fix geldiginde islenir (bkz. GPS Kalman notu)
     while (Serial2.available() > 0) gps.encode(Serial2.read());
     if (gps.location.isUpdated()) {
-        gpsEnlem = gps.location.lat();
-        gpsBoylam = gps.location.lng();
+        double ham_enlem  = gps.location.lat();
+        double ham_boylam = gps.location.lng();
+        if (!gps_ref_set) {                       // ilk fix -> referans noktasi
+            gps_ref_enlem  = ham_enlem;
+            gps_ref_boylam = ham_boylam;
+            gps_ref_set    = true;
+        }
+        // Referansa gore olcekli (~metre) domende filtrele, sonra dereceye don
+        float d_enlem  = kf_gpsEnlem.updateEstimate(
+                             (float)((ham_enlem  - gps_ref_enlem)  * GPS_KALMAN_OLCEK));
+        float d_boylam = kf_gpsBoylam.updateEstimate(
+                             (float)((ham_boylam - gps_ref_boylam) * GPS_KALMAN_OLCEK));
+        gpsEnlem  = (float)(gps_ref_enlem  + d_enlem  / GPS_KALMAN_OLCEK);
+        gpsBoylam = (float)(gps_ref_boylam + d_boylam / GPS_KALMAN_OLCEK);
     }
 
     // 2.5 BNO055 (IMU) — inis tespiti icin okunur ve ARTIK pakete de basilir.
+    // Eksenler Kalman'dan gecirilir; inis tespiti de bu filtrelenmis degerleri kullanir
+    // (gurultu azaldigi icin durgunluk penceresi bosuna sifirlanmaz).
     float ivmeX = 0, ivmeY = 0, ivmeZ = 0, gyroX = 0, gyroY = 0, gyroZ = 0;
+    float qx = 0, qy = 0, qz = 0;
     if (bnoOk) {
         sensors_event_t a, g;
         bno.getEvent(&a, Adafruit_BNO055::VECTOR_LINEARACCEL); // yercekimsiz -> yerde ~0
-        ivmeX = a.acceleration.x; ivmeY = a.acceleration.y; ivmeZ = a.acceleration.z;
+        ivmeX = kf_ivmeX.updateEstimate(a.acceleration.x);
+        ivmeY = kf_ivmeY.updateEstimate(a.acceleration.y);
+        ivmeZ = kf_ivmeZ.updateEstimate(a.acceleration.z);
         bno.getEvent(&g, Adafruit_BNO055::VECTOR_GYROSCOPE);
-        gyroX = g.gyro.x; gyroY = g.gyro.y; gyroZ = g.gyro.z;
+        gyroX = kf_gyroX.updateEstimate(g.gyro.x);
+        gyroY = kf_gyroY.updateEstimate(g.gyro.y);
+        gyroZ = kf_gyroZ.updateEstimate(g.gyro.z);
+
+        // Yonelim quaternion — yer istasyonundaki gercek zamanli 3B illustrasyon icin.
+        // main.cpp (UKB) ile birebir: w<0 ise ucunun de isareti cevrilir; ayni donusu
+        // temsil eder ama w>=0 garantisi verir, boylece yerde w=sqrt(1-x^2-y^2-z^2)
+        // ile tek anlamli geri hesaplanir (Euler'e ugranmadigi icin gimbal lock yok).
+        imu::Quaternion q = bno.getQuat();
+        float sgn = (q.w() < 0.0f) ? -1.0f : 1.0f;
+        qx = sgn * q.x();
+        qy = sgn * q.y();
+        qz = sgn * q.z();
     }
 
     // 2.6 INIS TESPITI (baro + IMU) — "uctu mu / durdu mu" (ucus algoritmasi DEGIL)
@@ -461,11 +649,14 @@ void Task1code(void *pvParameters) {
 
     // 3. Paketle ve Core 1'e gonder
     GorevYukuPaket packet;
+    packet.zaman_ms = millis();
     packet.basinc = basinc; packet.sicaklik = sicaklik; packet.nem = nem; packet.irtifa = irtifa;
+    packet.es = es_hpa; packet.pv = pv_hpa; packet.yogunluk = yogunluk;
     packet.gpsEnlem = gpsEnlem; packet.gpsBoylam = gpsBoylam;
     packet.ivmeX = ivmeX; packet.ivmeY = ivmeY; packet.ivmeZ = ivmeZ;
     // Bileske (toplam) ivme buyuklugu — core0'da hesaplanir, havadan tek slot ile gider.
     packet.ivmeToplam = sqrtf(ivmeX * ivmeX + ivmeY * ivmeY + ivmeZ * ivmeZ);
+    packet.qx = qx; packet.qy = qy; packet.qz = qz;
     packet.gyroX = gyroX; packet.gyroY = gyroY; packet.gyroZ = gyroZ;
 
     xQueueSend(telemetryQueue, &packet, 0);
@@ -497,6 +688,12 @@ void Task2code(void *pvParameters) {
 }
 
 void setup() {
+    // 0. SUREKLI BEACON — her seyden ONCE. Elektrik gelir gelmez otmeye baslar,
+    //    asagidaki init adimlarindan hicbiri (SD/BME/BNO bekleme veya hata dongusu) bunu durduramaz.
+#if BEACON_HEP_ACIK
+    xTaskCreatePinnedToCore(surekli_beacon_task, "Beacon", 2048, NULL, 3, NULL, 0);
+#endif
+
     // 1. Pinler
     pinMode(PIN_SDKART_DET, INPUT_PULLUP);
     pinMode(LORA_M0, OUTPUT);
@@ -505,10 +702,13 @@ void setup() {
     digitalWrite(LORA_M1, LOW);
 
     // Kurtarma beacon cikislari — baslangicta kapali
+    // (BEACON_HEP_ACIK=1 iken bu iki pin surekli_beacon_task'in kontrolunde, burada dokunulmaz)
+#if !BEACON_HEP_ACIK
     pinMode(PIN_BUZZER, OUTPUT | PULLDOWN);
     pinMode(PIN_LED, OUTPUT | PULLDOWN);
     digitalWrite(PIN_BUZZER, LOW);
     digitalWrite(PIN_LED, LOW);
+#endif
 
     // Durum gosterge LED'leri (26/4/25) — baslangicta kapali
     pinMode(PIN_LED_1, OUTPUT);
@@ -547,12 +747,15 @@ void setup() {
         lora_log("UYARI: SD Kart baslatilamadi!");
         sdOk = false;
     } else {
-        logFile = SD.open(LOG_DOSYA_ADI, FILE_APPEND);
+        if (!log_dosyasi_sec(log_dosya_adi, sizeof(log_dosya_adi)))
+            lora_log("UYARI: Log dosya sirasi doldu, sonuncuya ekleniyor.");
+        logFile = SD.open(log_dosya_adi, FILE_APPEND);
         if (logFile) {
-            if (logFile.size() == 0)
-                logFile.println("basinc,sicaklik,nem,irtifa,lat,lng,ivmeX,ivmeY,ivmeZ,gyroX,gyroY,gyroZ");
+            if (logFile.size() == 0) logFile.println(GY_CSV_BASLIK);
             sdOk = true;
-            lora_log("SD Kart baslatildi.");
+            char buf[48];
+            snprintf(buf, sizeof(buf), "SD Kart baslatildi. Log: %s", log_dosya_adi);
+            lora_log(buf);
         } else {
             lora_log("HATA: Log dosyasi acilamadi!");
             sdOk = false;

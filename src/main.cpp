@@ -207,7 +207,7 @@ float referans_basinc = 1013.25;
 // vTaskDelay(10)'in ustune biner, 100 degil). LoRa Hz = ~65 / ORANI.
 // ORANI=6 -> ~11 Hz x 28B = ~305 B/s (guvenli, >10 Hz, RF'e dokunmadan).
 // Not: ORANI=7 (38B iken) tavani asip CRC hatasi verdi -> paket 23B'ye indirildi.
-#define LORA_GONDERIM_ORANI    6
+#define LORA_GONDERIM_ORANI    10
 
 // --- SİT/SUT TTL (UART0 / Serial) ---
 #define BAUD_TTL             115200   // UART0 — SİT/SUT komut alma (Ek-7 Tablo 7 zorunlu)
@@ -480,6 +480,7 @@ struct TelemetryPacket {
     bool ayrilma1_durum;
     bool ayrilma2_durum;
     uint8_t ucus_durumu; // Uçuş evresi: 0=Hazır, 1=Yükseliyor, 2=İniş1, 3=İniş2, 4=İndi
+    uint32_t zaman_ms;   // millis() — SD log zaman ekseni (havadan GITMEZ)
 };
 #pragma pack(pop)
 
@@ -532,10 +533,27 @@ volatile int active_sd_buf = 0; // 0: A, 1: B
 volatile int sd_buf_idx = 0;
 
 QueueHandle_t telemetryQueue;
-// SD kart log dosya adi — bu karta ozel (2. UKB kartina basarken ukb_2 yap)
-#define LOG_DOSYA_ADI "/ukb_1.csv"
+// SD kart log dosyasi — HER UCUSTA YENI DOSYA:
+//   /ukb_log.csv, /ukb_log1.csv, /ukb_log2.csv ...
+// Acilista ilk bos isim secilir; boylece onceki ucusun logu ustune yazilmaz ve
+// ucuslar birbirine karismaz. Secilen ad LoRa'dan yayinlanir (yerden gorulur).
+#define LOG_DOSYA_ONEK "/ukb_log"
+#define LOG_DOSYA_MAX  999
+char log_dosya_adi[24] = LOG_DOSYA_ONEK ".csv";
 File logFile;
 bool sdOk = false;
+
+// Ilk kullanilmamis log dosyasi adini secer. Hepsi doluysa false doner ve
+// out sonuncuyu tutar (log kaybetmektense son dosyaya eklemeye devam et).
+static bool log_dosyasi_sec(char* out, size_t out_len) {
+    snprintf(out, out_len, "%s.csv", LOG_DOSYA_ONEK);
+    if (!SD.exists(out)) return true;
+    for (int i = 1; i <= LOG_DOSYA_MAX; i++) {
+        snprintf(out, out_len, "%s%d.csv", LOG_DOSYA_ONEK, i);
+        if (!SD.exists(out)) return true;
+    }
+    return false;
+}
 
 // Hazır Kullanılacak Metodlar/Fonksiyonlar
 
@@ -759,15 +777,39 @@ void gonder_durum_paketi() {
     Serial.write(paket, SITSUT_DURUM_BOYUT);
 }
 
+// --- CSV SAYI BICIMI: TURKCE EXCEL UYUMU ---
+// Ayrac ';' , ondalik ',' -> Turkce Excel'de cift tikla acilir, sutunlar ve
+// sayilar dogru gelir. Ayrac ';' oldugundan ondalik virgul ile cakismaz.
+// Python tarafi: pd.read_csv(f, sep=';', decimal=',')
+static inline void ondalik_virgulle(char* s, int len) {
+    for (int i = 0; i < len; i++) if (s[i] == '.') s[i] = ',';
+}
+
+#define UKB_CSV_BASLIK "zaman_ms;ivmeX;ivmeY;ivmeZ;ivmeToplam;gyroX;gyroY;gyroZ;" \
+                       "roll;pitch;yaw;qx;qy;qz;irtifa_m;dikeyHiz_ms;eglim_derece;" \
+                       "gpsEnlem;gpsBoylam;ayrilma1;ayrilma2;ucus_durumu"
+
 // --- BUFFERLI (PING-PONG) SD YAZMA ---
 void bufferla_ve_yaz_sd(File& file, const TelemetryPacket& pkt) {
-    char temp_line[160];
+    char temp_line[320];
     // Paketi CSV satırına dönüştür (basinc, sicaklik, nem kaldirildi)
-    int line_len = snprintf(temp_line, sizeof(temp_line), 
-        "%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.6f,%.6f,%d,%d,%d\n",
-        pkt.ivmeX, pkt.ivmeY, pkt.ivmeZ, pkt.gyroX, pkt.gyroY, pkt.gyroZ,
-        pkt.roll, pkt.pitch, pkt.yaw, pkt.irtifa, pkt.dikeyHiz, pkt.eglimAcisi,
-        pkt.gpsEnlem, pkt.gpsBoylam, pkt.ayrilma1_durum, pkt.ayrilma2_durum, pkt.ucus_durumu);
+    int line_len = snprintf(temp_line, sizeof(temp_line),
+        "%lu;%.2f;%.2f;%.2f;%.2f;%.2f;%.2f;%.2f;%.2f;%.2f;%.2f;"
+        "%.4f;%.4f;%.4f;%.2f;%.2f;%.2f;%.7f;%.7f;%d;%d;%d\n",
+        (unsigned long)pkt.zaman_ms,
+        pkt.ivmeX, pkt.ivmeY, pkt.ivmeZ, pkt.ivmeToplam,
+        pkt.gyroX, pkt.gyroY, pkt.gyroZ,
+        pkt.roll, pkt.pitch, pkt.yaw,
+        pkt.qx, pkt.qy, pkt.qz,
+        pkt.irtifa, pkt.dikeyHiz, pkt.eglimAcisi,
+        pkt.gpsEnlem, pkt.gpsBoylam,
+        pkt.ayrilma1_durum, pkt.ayrilma2_durum, pkt.ucus_durumu);
+
+    // snprintf kesme yaptiysa YAZILACAK degil YAZILABILECEK uzunlugu dondurur;
+    // kirpilmazsa asagidaki memcpy ping-pong tamponunun disina tasar.
+    if (line_len < 0) return;
+    if (line_len >= (int)sizeof(temp_line)) line_len = (int)sizeof(temp_line) - 1;
+    ondalik_virgulle(temp_line, line_len);
 
     char* current_buf = (active_sd_buf == 0) ? sd_dma_buf_A : sd_dma_buf_B;
 
@@ -1122,6 +1164,7 @@ void Task1code(void *pvParameters) {
     packet.gpsEnlem = gpsEnlem; packet.gpsBoylam = gpsBoylam;
     packet.ayrilma1_durum = ayrilma1; packet.ayrilma2_durum = ayrilma2;
     packet.ucus_durumu = (uint8_t)durum;
+    packet.zaman_ms = millis();   // SD log zaman ekseni (havadan gitmez)
 
     // Kuyruğa Gönder (Kuyruk doluysa beklemez (0), veriyi atlar. 
     // Sensör okuma hızının bloke olmasını engelleriz.)
@@ -1353,12 +1396,18 @@ void setup() {
         lora_log("UYARI: SD Kart baslatilamadi! Loglama yapilmayacak.");
         sdOk = false;
     } else {
-        lora_log("SD Kart baslatildi.");
-        logFile = SD.open(LOG_DOSYA_ADI, FILE_APPEND);
+        if (!log_dosyasi_sec(log_dosya_adi, sizeof(log_dosya_adi)))
+            lora_log("UYARI: Log dosya sirasi doldu, sonuncuya ekleniyor.");
+        {
+            char buf[48];
+            snprintf(buf, sizeof(buf), "SD Kart baslatildi. Log: %s", log_dosya_adi);
+            lora_log(buf);
+        }
+        logFile = SD.open(log_dosya_adi, FILE_APPEND);
         if (logFile) {
             // Dosya yeni oluşturulduysa veya boşsa başlık yaz
             if (logFile.size() == 0) {
-                logFile.println("ivmeX,ivmeY,ivmeZ,gyroX,gyroY,gyroZ,roll,pitch,yaw,irtifa,hiz,eglim,lat,lng,ayr1,ayr2,state");
+                logFile.println(UKB_CSV_BASLIK);
             }
             sdOk = true;
         } else {
