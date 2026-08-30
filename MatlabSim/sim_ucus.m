@@ -111,13 +111,13 @@ function [o, g] = sensor_oku(y, t, p, drogue_t, ana_t)
     % Dinamik basinc terimi statik delik yerlesiminden dogar ve hizla
     % artar; "sahte irtifa dususu" mekanizmasi budur (bkz. README 4.3).
     v2   = vx^2 + vz^2;
-    rho  = p.rho0 * exp(-max(z,0)/p.olcek_yuk);
+    rho  = p.rho0 * exp(-(max(z,0)+p.kalkis_rakimi)/p.olcek_yuk);
     dyn  = p.baro_dinamik_k * 0.5 * rho * v2 / (rho * p.g);   % [m] karsiligi
     o.irtifa = z - dyn + p.baro_sigma * randn();
 
     % --- IMU: BNO055 LINEARACCEL gibi, YERCEKIMI CIKARILMIS, govde ekseninde ---
     [F, ~] = kuvvetler(y, t, p, drogue_t, ana_t);
-    m      = kutle(t, p);
+    m      = kutle(t, p, drogue_t);
     a_lin  = F.itki_ve_suruklenme / m;            % agirlik haric [x z]
     eks_z  = [sin(th); cos(th)];                  % govde uzun ekseni
     eks_x  = [cos(th); -sin(th)];
@@ -134,9 +134,17 @@ function [o, g] = sensor_oku(y, t, p, drogue_t, ana_t)
 end
 
 % =====================================================================
-function m = kutle(t, p)
+function m = kutle(t, p, drogue_t)
+%KUTLE  Anlik kutle.
+%   Yakit, gecen ZAMANLA degil harcanan IMPULS'la orantili tukenir — gercek
+%   itki egrisi one yuklu oldugu icin aradaki fark max-Q civarinda anlamlidir.
+%   Apogee'de govde ayrilir: UKB'yi tasiyan ana govde daha hafif iner.
+    if nargin < 3, drogue_t = NaN; end
     if t < p.yanma_suresi
-        m = p.m_kalkis - p.m_yakit * (t / p.yanma_suresi);
+        harcanan = p.impuls_kum(min(t, p.yanma_suresi)) / p.impuls_toplam;
+        m = p.m_kalkis - p.m_yakit * harcanan;
+    elseif ~isnan(drogue_t) && t >= drogue_t
+        m = p.m_ayrilma;          % drogue ile birlikte ayrildi
     else
         m = p.m_bos;
     end
@@ -147,8 +155,8 @@ function [F, M] = kuvvetler(y, t, p, drogue_t, ana_t)
 %KUVVETLER  Toplam kuvvet [x z] ve yunuslama momenti.
 
     z = y(2); vx = y(3); vz = y(4); th = y(5); om = y(6);
-    m   = kutle(t, p);
-    rho = p.rho0 * exp(-max(z,0)/p.olcek_yuk);
+    m   = kutle(t, p, drogue_t);
+    rho = p.rho0 * exp(-(max(z,0)+p.kalkis_rakimi)/p.olcek_yuk);
 
     eks_z = [sin(th); cos(th)];              % govde uzun ekseni (burun)
 
@@ -207,7 +215,7 @@ end
 % =====================================================================
 function ydot = tureva(y, t, p, drogue_t, ana_t)
     [F, M] = kuvvetler(y, t, p, drogue_t, ana_t);
-    m = kutle(t, p);
+    m = kutle(t, p, drogue_t);
 
     % --- RAMPA FAZI ---
     % Roket rampayi terk edene kadar donemez ve yalniz ray boyunca hareket

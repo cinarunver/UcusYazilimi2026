@@ -82,18 +82,38 @@ p.baro_sigma     = 3.0;    % gürültülü barometre
 
 Algoritmanın iyiliği, turuncu çizginin turuncu üçgene ne kadar yakın olduğudur.
 
+## Model doğrulaması
+
+Roket verileri `config/rocket.ork` (OpenRocket 24.12, "Akdoğan") dosyasından
+çıkarıldı. Model, OpenRocket'ın kendi simülasyonuna karşı doğrulandı:
+
+| | OpenRocket | Bu sim | Fark |
+| :--- | ---: | ---: | ---: |
+| Apogee | 3703.3 m | 3692.8 m | %0.3 |
+| Apogee zamanı | 27.81 s | 27.73 s | %0.3 |
+| Maks hız | 276.8 m/s | 276.1 m/s | %0.3 |
+| Rampa çıkış hızı | 31.0 m/s | 31.4 m/s | %1.3 |
+| 550 m'ye iniş | 230.1 s | 223.4 s | %2.9 |
+| Yere çarpma | 6.3 m/s | 5.8 m/s | %8 |
+
+Tek serbest parametre gövde `Cd`'siydi; apogee'ye göre süpürülüp 0.54 bulundu.
+Diğer her şey (`itki eğrisi`, kütleler, paraşüt `Cd·A`, ayrılma kütlesi, rüzgâr,
+rampa) doğrudan `.ork` dosyasından geldi.
+
 ## Şu an geçerli olan ve olmayan
 
-**Geçerli:** algoritmanın mantığı, durum geçişleri, eşiklerin birbirine göre
-etkisi, senaryolara tepkisi.
+**Geçerli:** yörünge (yukarıdaki tabloya göre), algoritmanın mantığı, durum
+geçişleri, eşiklerin birbirine göre etkisi.
 
-**Henüz geçerli değil:** mutlak sayılar. İki sebepten —
+**Henüz geçerli değil:** sensör gürültüsüne bağlı sonuçlar. Gürültü
+parametreleri **kalibre edilmedi** — tasarım dokümanı §6.3: bu değerler
+uydurulmaz, karttan ölçülür (hareketsiz kartta 5 dakikalık `ucusdebug` logu →
+σ, bias, drift). O yapılmadan çıkan eşik önerileri dairesel akıl yürütmedir.
 
-1. `config/roket_params.m` içindeki roket verileri temsili.
-2. Sensör gürültü parametreleri **kalibre edilmedi**. Tasarım dokümanı §6.3:
-   bu değerler uydurulmaz, karttan ölçülür (hareketsiz kartta 5 dakikalık
-   `ucusdebug` logu → σ, bias, drift). O yapılmadan çıkan eşik önerileri
-   dairesel akıl yürütmedir.
+**Model basitleştirmeleri:** 3-DOF düzlemsel (roll/yaw yok — algoritma zaten
+onlara bakmıyor); ayrılma sonrası yalnız ana gövde izlenir (burun/görev yükü
+bölümü 5.13 kg ile ayrı iner, modellenmedi); paraşüt altında gövde
+aerodinamiği yerine basit sönümleme.
 
 ## Testler
 
