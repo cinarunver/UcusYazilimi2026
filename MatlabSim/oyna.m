@@ -8,7 +8,12 @@
 %   oldugu gibi.
 
 clear; clc;
-addpath('config');
+
+% --- Yol kurulumu: nereden calistirilirsa calistirilsin dogru klasoru bulur ---
+% VSCode dosyayi calistirirken MATLAB'in gecerli klasoru proje koku olabilir;
+% bu yuzden yollar dosyanin KENDI konumundan turetiliyor.
+buradan = fileparts(mfilename('fullpath'));
+addpath(buradan, fullfile(buradan, 'config'));
 
 p = roket_params();          % <-- roketin fizigi: config/roket_params.m
 
@@ -17,7 +22,7 @@ p = roket_params();          % <-- roketin fizigi: config/roket_params.m
 % =====================================================================
 s = sim_ucus(p);
 ozet(s, 'NOMINAL — mevcut esikler');
-ciz(s, 'Nominal ucus — mevcut esikler', fullfile('cikti','1_nominal.png'));
+ciz(s, 'Nominal ucus — mevcut esikler', fullfile(buradan,'cikti','1_nominal.png'));
 
 
 % =====================================================================
@@ -39,7 +44,7 @@ ayar.apogee_irtifa_farki = 25;        % <-- DENE: 10 yerine 25 m
 
 s2 = sim_ucus(p, ayar);
 ozet(s2, 'DENEME — apogee_irtifa_farki = 25 m');
-ciz(s2, 'apogee\_irtifa\_farki = 25 m', fullfile('cikti','2_deneme.png'));
+ciz(s2, 'apogee\_irtifa\_farki = 25 m', fullfile(buradan,'cikti','2_deneme.png'));
 
 fprintf('\n--- KARSILASTIRMA -------------------------------------\n');
 fprintf('  %-28s %10s %10s\n', '', 'mevcut', 'deneme');
@@ -62,6 +67,6 @@ p_kotu.baro_dinamik_k = 0.06;         % <-- DENE: 0, 0.02, 0.06, 0.12
 
 s3 = sim_ucus(p_kotu);
 ozet(s3, 'ARIZA — kotu statik delik (baro_dinamik_k = 0.06)');
-ciz(s3, 'Ariza: dinamik basinc hatasi', fullfile('cikti','3_ariza.png'));
+ciz(s3, 'Ariza: dinamik basinc hatasi', fullfile(buradan,'cikti','3_ariza.png'));
 
-fprintf('\nGrafikler MatlabSim/cikti/ altina kaydedildi.\n');
+fprintf('\nGrafikler kaydedildi: %s\n', fullfile(buradan,'cikti'));

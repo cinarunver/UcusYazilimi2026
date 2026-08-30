@@ -6,8 +6,10 @@ içinde koşturur. Algoritma yeniden yazılmadı: `ucus_mex`, doğrudan
 
 ## Nereden başlanır
 
+Dosyalar kendi konumlarını bulur — hangi klasörden çalıştırdığın önemli değil.
+VSCode'da `oyna.m`'i açıp **F5**'e basman yeterli.
+
 ```matlab
-cd MatlabSim
 oyna                  % tek uçuş + grafikler
 kos_senaryolar()      % 10 doğrulama senaryosu
 monte_carlo([], 50)   % belirsizlik altında 50 uçuş
@@ -101,16 +103,16 @@ Roket verileri `config/rocket.ork` (OpenRocket 24.12, "Akdoğan") dosyasından
 
 | | OpenRocket | Bu sim | Fark |
 | :--- | ---: | ---: | ---: |
-| Apogee | 3703.3 m | 3692.8 m | %0.3 |
-| Apogee zamanı | 27.81 s | 27.73 s | %0.3 |
-| Maks hız | 276.8 m/s | 276.1 m/s | %0.3 |
-| Rampa çıkış hızı | 31.0 m/s | 31.4 m/s | %1.3 |
-| 550 m'ye iniş | 230.1 s | 223.4 s | %2.9 |
-| Yere çarpma | 6.3 m/s | 5.8 m/s | %8 |
+| Apogee | 3703.3 m | 3704.4 m | %0.03 |
+| Apogee zamanı | 27.81 s | 27.67 s | %0.5 |
+| Maks hız | 276.8 m/s | 275.5 m/s | %0.5 |
+| Rampa çıkış hızı | 31.0 m/s | 31.1 m/s | %0.3 |
+| Yere çarpma | 6.3 m/s | 5.7 m/s | %10 |
+| Apogee eğimi | 24.7° | 11.5° | bkz. BULGULAR.md Bulgu 3 |
 
-Tek serbest parametre gövde `Cd`'siydi; apogee'ye göre süpürülüp 0.54 bulundu.
-Diğer her şey (`itki eğrisi`, kütleler, paraşüt `Cd·A`, ayrılma kütlesi, rüzgâr,
-rampa) doğrudan `.ork` dosyasından geldi.
+Tek serbest parametre gövde `Cd`'siydi; apogee'ye göre süpürülüp 0.500 bulundu.
+Diğer her şey (itki eğrisi, kütleler, paraşüt `Cd·A`, ayrılma kütlesi, CP−CG,
+atalet momenti, rüzgâr, rampa) doğrudan `.ork` dosyasından geldi.
 
 ## Şu an geçerli olan ve olmayan
 

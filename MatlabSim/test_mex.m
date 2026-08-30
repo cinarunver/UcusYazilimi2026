@@ -8,6 +8,10 @@ function test_mex()
 %
 %   Kullanim:  cd MatlabSim; test_mex
 
+    % --- Yol kurulumu (bkz. oyna.m'deki aciklama) ---
+    buradan = fileparts(mfilename('fullpath'));
+    addpath(buradan, fullfile(buradan, 'config'));
+
     fprintf('=== ucus_mex kopru dogrulamasi ===\n');
     gecen = 0; kalan = 0;
 

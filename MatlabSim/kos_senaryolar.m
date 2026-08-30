@@ -10,7 +10,9 @@ function T = kos_senaryolar(ayar, ciz_mi)
     if nargin < 1, ayar = struct(); end
     if nargin < 2, ciz_mi = false; end
 
-    addpath('config');
+    % --- Yol kurulumu (bkz. oyna.m'deki aciklama) ---
+    buradan = fileparts(mfilename('fullpath'));
+    addpath(buradan, fullfile(buradan, 'config'));
     p0 = roket_params();
     S  = senaryolar();
     n  = numel(S);
@@ -39,7 +41,7 @@ function T = kos_senaryolar(ayar, ciz_mi)
 
         if ciz_mi
             ciz(s, sprintf('%d. %s', i, S(i).ad), ...
-                fullfile('cikti','senaryo',sprintf('%02d_%s.png', i, dosyaadi(S(i).ad))));
+                fullfile(buradan,'cikti','senaryo',sprintf('%02d_%s.png', i, dosyaadi(S(i).ad))));
         end
     end
 

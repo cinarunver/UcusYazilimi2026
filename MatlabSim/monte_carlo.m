@@ -17,7 +17,9 @@ function R = monte_carlo(ayar, N, tohumlar)
     if nargin < 3 || isempty(tohumlar), tohumlar = 1:N; end
     N = numel(tohumlar);
 
-    addpath('config');
+    % --- Yol kurulumu (bkz. oyna.m'deki aciklama) ---
+    buradan = fileparts(mfilename('fullpath'));
+    addpath(buradan, fullfile(buradan, 'config'));
     p0 = roket_params();
 
     apogee = zeros(N,1); drogue_z = zeros(N,1); gecikme = nan(N,1);

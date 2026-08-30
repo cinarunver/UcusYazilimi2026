@@ -10,6 +10,11 @@ function T = supur(alan, degerler, N)
 %   CRN ile fark dogrudan esikten gelir.
 
     if nargin < 3 || isempty(N), N = 60; end
+
+    % --- Yol kurulumu (bkz. oyna.m'deki aciklama) ---
+    buradan = fileparts(mfilename('fullpath'));
+    addpath(buradan, fullfile(buradan, 'config'));
+
     tohumlar = 1:N;                       % <-- CRN: tum adaylarda AYNI
 
     n = numel(degerler);

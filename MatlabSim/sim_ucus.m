@@ -19,6 +19,8 @@ function s = sim_ucus(p, ayar, ariza)
     if nargin < 2 || isempty(ayar),  ayar  = struct();    end
     if nargin < 3 || isempty(ariza), ariza = ariza_yok();  end
     ariza = ariza_tamamla(ariza);
+    % ucus_mex ve yardimcilar, cagiran nereden olursa olsun bulunabilsin
+    addpath(fileparts(mfilename('fullpath')));
     rng(p.tohum);
 
     % --- Algoritmayi baslat (GERCEK kod, MEX koprusu uzerinden) ---
