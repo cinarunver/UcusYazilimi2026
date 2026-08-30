@@ -1,8 +1,9 @@
-function s = sim_ucus(p, ayar)
+function s = sim_ucus(p, ayar, ariza)
 %SIM_UCUS  Kapali dongu ucus simulasyonu — GERCEK ucus algoritmasiyla.
 %
-%   s = SIM_UCUS(p)         p = roket_params()
-%   s = SIM_UCUS(p, ayar)   ayar = ucus algoritmasi esikleri (struct)
+%   s = SIM_UCUS(p)                p = roket_params()
+%   s = SIM_UCUS(p, ayar)          ayar  = ucus algoritmasi esikleri (struct)
+%   s = SIM_UCUS(p, ayar, ariza)   ariza = ariza enjeksiyonu (bkz. ariza_yok)
 %
 %   DONGU KAPALIDIR: algoritma drogue emri verdiginde roketin suruklemesi
 %   degisir, dolayisiyla sonraki yorunge algoritmanin kararina baglidir.
@@ -15,7 +16,9 @@ function s = sim_ucus(p, ayar)
 %   Donen s yapisinda: t, z, vz, tilt (gercek) + olculen degerler +
 %   algoritmanin durumu ve emir anlari.
 
-    if nargin < 2, ayar = struct(); end
+    if nargin < 2 || isempty(ayar),  ayar  = struct();    end
+    if nargin < 3 || isempty(ariza), ariza = ariza_yok();  end
+    ariza = ariza_tamamla(ariza);
     rng(p.tohum);
 
     % --- Algoritmayi baslat (GERCEK kod, MEX koprusu uzerinden) ---
@@ -38,21 +41,29 @@ function s = sim_ucus(p, ayar)
     s.tilt_kest  = nan(n,1);   s.durum    = nan(n,1);
     s.az_olculen = nan(n,1);   s.bitler   = nan(n,1);
 
+    s.drogue_emir_t = NaN;      % EMIR ani (funye calismasa da kaydedilir)
+    son_olcum = [];
+
     adim_orani = round(p.dt_sensor / p.dt_fizik);
-    t = 0; k = 0; i = 0;
+    t = 0; k = 0; i = 0; takla_yapildi = false;
 
     while t < p.t_bitis
         % ---------- SENSOR + ALGORITMA (100 Hz) ----------
         if mod(k, adim_orani) == 0
             i = i + 1;
-            [olcum, gercek] = sensor_oku(y, t, p, drogue_t, ana_t);
+            [olcum, ~] = sensor_oku(y, t, p, drogue_t, ana_t, ariza, son_olcum);
+            son_olcum = olcum;
 
             girdi = ucus_girdi(olcum.irtifa, olcum.ivme, olcum.euler, ...
                                olcum.kuat, round(t*1e6), false, true);
             [hal, c] = ucus_mex('adim', hal, girdi);
 
             % --- EMIRLER: modele geri besleme (dongunun kapandigi yer) ---
-            if c.funye1_emir && isnan(drogue_t), drogue_t = t; end
+            % ariza.drogue_calismadi: emir verilir ama funye/parasut acilmaz.
+            if c.funye1_emir && isnan(drogue_t)
+                s.drogue_emir_t = t;
+                if ~ariza.drogue_calismadi, drogue_t = t; end
+            end
             if c.funye2_emir && isnan(ana_t),    ana_t    = t; end
 
             s.t(i)=t;  s.z(i)=y(2);  s.vz(i)=y(4);  s.x(i)=y(1);
@@ -68,8 +79,15 @@ function s = sim_ucus(p, ayar)
             if c.durum == 4 && t > 1, break; end      % INDI
         end
 
+        % ---------- ARIZA: TAKLA ENJEKSIYONU ----------
+        % Belirtilen anda roketi ani bir acisal hizla dondurmeye baslatir
+        % (govde kirilmasi / kanatcik kaybi benzeri).
+        if ~isnan(ariza.takla_t) && t >= ariza.takla_t && ~takla_yapildi
+            y(6) = ariza.takla_omega;   takla_yapildi = true;
+        end
+
         % ---------- FIZIK (1 kHz, RK4) ----------
-        y = rk4(y, t, p.dt_fizik, p, drogue_t, ana_t);
+        y = rk4(y, t, p.dt_fizik, p, drogue_t, ana_t, ariza);
         if y(2) < 0 && t > 1, y(2) = 0; break; end     % yere carpti
         t = t + p.dt_fizik; k = k + 1;
     end
@@ -100,9 +118,12 @@ function z = kesit(s, tt)
 end
 
 % =====================================================================
-function [o, g] = sensor_oku(y, t, p, drogue_t, ana_t)
+function [o, g] = sensor_oku(y, t, p, drogue_t, ana_t, ariza, son_olcum)
 %SENSOR_OKU  Gercek durumdan HAM sensor okumasi uretir.
 %   Algoritmanin gordugu tek sey budur — gercek durumu asla gormez.
+
+    if nargin < 6 || isempty(ariza), ariza = ariza_tamamla(ariza_yok()); end
+    if nargin < 7, son_olcum = []; end
 
     z = y(2); vx = y(3); vz = y(4); th = y(5);
     g.z = z;  g.tilt = abs(th)*180/pi;
@@ -116,7 +137,7 @@ function [o, g] = sensor_oku(y, t, p, drogue_t, ana_t)
     o.irtifa = z - dyn + p.baro_sigma * randn();
 
     % --- IMU: BNO055 LINEARACCEL gibi, YERCEKIMI CIKARILMIS, govde ekseninde ---
-    [F, ~] = kuvvetler(y, t, p, drogue_t, ana_t);
+    [F, ~] = kuvvetler(y, t, p, drogue_t, ana_t, ariza);
     m      = kutle(t, p, drogue_t);
     a_lin  = F.itki_ve_suruklenme / m;            % agirlik haric [x z]
     eks_z  = [sin(th); cos(th)];                  % govde uzun ekseni
@@ -129,6 +150,23 @@ function [o, g] = sensor_oku(y, t, p, drogue_t, ana_t)
     th_ol   = th + (p.aci_sigma*pi/180) * randn();
     o.euler = [th_ol*180/pi, 0, 0];                     % roll, pitch, yaw
     o.kuat  = [cos(th_ol/2), sin(th_ol/2), 0, 0];       % qw qx qy qz
+
+    % ---------------- ARIZA ENJEKSIYONU ----------------
+    % IMU doyma: BNO055 lineer ivme araligi asilirsa olcum kirpilir.
+    if isfinite(ariza.imu_doyma)
+        o.ivme = max(-ariza.imu_doyma, min(ariza.imu_doyma, o.ivme));
+    end
+    % IMU eksen hizalama hatasi: govde ekseni ile sensor ekseni arasindaki aci
+    if ariza.imu_eksen_hatasi ~= 0
+        e = ariza.imu_eksen_hatasi * pi/180;
+        ax = o.ivme(1); az = o.ivme(3);
+        o.ivme(1) = ax*cos(e) - az*sin(e);
+        o.ivme(3) = ax*sin(e) + az*cos(e);
+    end
+    % Barometre donmasi: son gecerli degeri tekrarlar (I2C kopmasi / tikanma)
+    if ~isnan(ariza.baro_don_t) && t >= ariza.baro_don_t && ~isempty(son_olcum)
+        o.irtifa = son_olcum.irtifa;
+    end
     % Not: 1 - 2*(qx^2+qy^2) = cos(th) -> algoritmanin egim formulu dogru
     % aciyi verir. Gercek ucus yolu bu (kuaterniyon), Euler DEGIL.
 end
@@ -151,8 +189,9 @@ function m = kutle(t, p, drogue_t)
 end
 
 % =====================================================================
-function [F, M] = kuvvetler(y, t, p, drogue_t, ana_t)
+function [F, M] = kuvvetler(y, t, p, drogue_t, ana_t, ariza)
 %KUVVETLER  Toplam kuvvet [x z] ve yunuslama momenti.
+    if nargin < 6, ariza = ariza_tamamla(ariza_yok()); end
 
     z = y(2); vx = y(3); vz = y(4); th = y(5); om = y(6);
     m   = kutle(t, p, drogue_t);
@@ -169,7 +208,16 @@ function [F, M] = kuvvetler(y, t, p, drogue_t, ana_t)
     V     = norm(v_bag);
 
     % --- Surukleme: govde + acilmis parasutler ---
-    CdA = p.Cd * p.A;
+    % HUCUM ACISINA BAGLI ALAN: roket burnu hiz vektorune bakiyorsa eksenel
+    % alan (kucuk), yan geliyorsa profil alani (buyuk, ~30 kat) gecerlidir.
+    % Bu terim olmadan takla YORUNGEYI HIC ETKILEMEZ — dogru degildir ve
+    % takla senaryolarini anlamsiz kilar.
+    if V > 1e-6
+        beta = atan2(v_bag(1), v_bag(2)) - th;
+        CdA = p.Cd * p.A * abs(cos(beta)) + p.Cd_yan * p.A_yan * abs(sin(beta));
+    else
+        CdA = p.Cd * p.A;
+    end
     CdA = CdA + parasut_CdA(t, drogue_t, p.drogue_CdA, p);
     CdA = CdA + parasut_CdA(t, ana_t,    p.ana_CdA,    p);
 
@@ -186,7 +234,8 @@ function [F, M] = kuvvetler(y, t, p, drogue_t, ana_t)
     % Parasut altinda govde aerodinamigi anlamsizlasir, momenti sonlendir.
     % V esigi ONEMLI: dusuk hizda atan2 ile hesaplanan hucum acisi anlamsiz
     % buyur (ruzgar hiz vektorune hakim olur) ve roketi rampada devirir.
-    if V > 30 && isnan(drogue_t)
+    kararli = isnan(ariza.kararlilik_kaybi_t) || t < ariza.kararlilik_kaybi_t;
+    if V > 30 && isnan(drogue_t) && kararli
         alpha = atan2(v_bag(1), v_bag(2)) - th;      % hucum acisi
         alpha = atan2(sin(alpha), cos(alpha));       % [-pi, pi]
         alpha = max(-0.35, min(0.35, alpha));        % dogrusal aralikta tut (~20 derece)
@@ -213,8 +262,9 @@ function CdA = parasut_CdA(t, acilma_t, tam_CdA, p)
 end
 
 % =====================================================================
-function ydot = tureva(y, t, p, drogue_t, ana_t)
-    [F, M] = kuvvetler(y, t, p, drogue_t, ana_t);
+function ydot = tureva(y, t, p, drogue_t, ana_t, ariza)
+    if nargin < 6, ariza = ariza_tamamla(ariza_yok()); end
+    [F, M] = kuvvetler(y, t, p, drogue_t, ana_t, ariza);
     m = kutle(t, p, drogue_t);
 
     % --- RAMPA FAZI ---
@@ -238,10 +288,10 @@ function ydot = tureva(y, t, p, drogue_t, ana_t)
 end
 
 % =====================================================================
-function y2 = rk4(y, t, h, p, drogue_t, ana_t)
-    k1 = tureva(y,          t,       p, drogue_t, ana_t);
-    k2 = tureva(y + h/2*k1, t + h/2, p, drogue_t, ana_t);
-    k3 = tureva(y + h/2*k2, t + h/2, p, drogue_t, ana_t);
-    k4 = tureva(y + h*k3,   t + h,   p, drogue_t, ana_t);
+function y2 = rk4(y, t, h, p, drogue_t, ana_t, ariza)
+    k1 = tureva(y,          t,       p, drogue_t, ana_t, ariza);
+    k2 = tureva(y + h/2*k1, t + h/2, p, drogue_t, ana_t, ariza);
+    k3 = tureva(y + h/2*k2, t + h/2, p, drogue_t, ana_t, ariza);
+    k4 = tureva(y + h*k3,   t + h,   p, drogue_t, ana_t, ariza);
     y2 = y + (h/6) * (k1 + 2*k2 + 2*k3 + k4);
 end

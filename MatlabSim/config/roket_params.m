@@ -19,12 +19,17 @@ p.m_kalkis     = 23.166;    % kg    kalkis kutlesi (yakit dahil)      [ORK]
 p.m_yakit      =  4.103;    % kg    harcanan yakit kutlesi            [ORK]
 p.cap          =  0.115;    % m     govde capi (aftradius 0.0575*2)   [ORK]
 p.uzunluk      =  2.75;     % m     burun 0.32 + ust 1.40 + alt 1.03  [ORK]
-p.Cd           =  0.54;     % -     govde surukleme katsayisi   [KALIBRE EDILDI]
+p.Cd           =  0.515;    % -     govde surukleme katsayisi   [KALIBRE EDILDI]
                             %       OpenRocket apogee'sine (3703.3 m) gore
-                            %       supuruldu; 0.54 -> 3692.8 m (%0.3 hata).
+                            %       supuruldu; hucum acisina bagli alan
+                            %       modeli eklendikten sonra yeniden ayarlandi.
 p.CP_CG        =  0.60;     % m     basinc merkezi - agirlik merkezi  [TAHMIN]
 p.Cn_alpha     =  9.0;      % 1/rad normal kuvvet egimi               [TAHMIN]
 p.sonumleme    =  0.35;     % -     yunuslama sonumleme katsayisi     [TAHMIN]
+p.Cd_yan       =  1.20;     % -     yanal (capraz akis) surukleme kats. [TAHMIN]
+                            %       Silindir capraz akisi ~1.2. Takla halinde
+                            %       govde yandan gelir; etkin alan eksenel
+                            %       alanin ~30 katidir, bu terim onu modeller.
 
 % ====================================================================
 %  MOTOR — TFM1850W (Teknofest26)
@@ -110,7 +115,8 @@ p.t_bitis      = 400;       % s   guvenlik ust siniri
 p.tohum        = 42;        % -   rastgele tohum (tekrarlanabilirlik icin)
 
 % --- Turetilenler (elleme) ---
-p.A            = pi * (p.cap/2)^2;
+p.A            = pi * (p.cap/2)^2;       % eksenel (on) alan
+p.A_yan        = p.uzunluk * p.cap;      % yanal (profil) alan
 p.m_bos        = p.m_kalkis - p.m_yakit;
 p.yanma_suresi = p.itki_egrisi(end,1);
 
