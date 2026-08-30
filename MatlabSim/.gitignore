@@ -1,0 +1,6 @@
+# Derlenmis MEX ikilisi — kaynaktan uretilir (MatlabSim/mex/derle.m)
+*.mexmaca64
+*.mexmaci64
+*.mexa64
+*.mexw64
+.claude-flow/
