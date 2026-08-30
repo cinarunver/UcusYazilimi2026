@@ -20,6 +20,15 @@ Bu kısıtlar her görev için geçerlidir:
 - **Eşik değerleri değişmez.** `KALKIS_IVME_ESIGI = 20.0`, `APOGEE_IRTIFA_FARKI = 10.0`, `MIN_DIKEY_HIZ = 3.0`, `MAX_EGLIM = 75.0`, `APOGEE_MIN_IRTIFA = AYRILMA2_MESAFE`, `AYRILMA2_MESAFE = 550.0`, `INIS_HIZ_ESIGI = 2.0`, `INIS_IRTIFA_ESIGI = 20.0`, Kalman irtifa `(1.5, 1.5, 0.1)`, Kalman ivme/gyro `(2.906, 9.982, 0.3884)`. Yalnız yerleri değişir.
 - **Yorum blokları birebir taşınır.** Özellikle `APOGEE_MIN_IRTIFA`, `MAX_EGLIM`, `APOGEE_SERBEST_IVME`, yedek tetik ve "EULER ACILARI FILTRELENMEZ" gerekçeleri kodun değerli kısmıdır; kısaltılmaz.
 - **Commit mesajlarına `Co-Authored-By` satırı eklenmez.**
+- **`pio` PATH'te değil.** Plandaki tüm `pio ...` komutlarını `~/.platformio/penv/bin/pio ...` olarak çalıştır.
+
+## Durum (2026-08-30)
+
+Görev 2-5 **tamamlandı** (commit `8bbd191`): `UcusAlgoritmasi/ucus_algoritmasi.h` yazıldı, `test/test_ucus_algo/test_algo.cpp` 26/26 geçiyor, `platformio.ini`'ye `[env:native]` eklendi. `src/main.cpp`'ye dokunulmadı.
+
+Görev 1 ve 8 **kart bağlı olmadığı için beklemede**. Görev 6 bilinçli olarak ertelendi: altın referans (Görev 1) ancak `main.cpp` değişmeden yakalanabilir, o yüzden sıra kart geldiğinde **1 → 6 → 7 → 8** olmalı.
+
+> **Görev 1 öncesi dikkat:** `src/main.cpp` çalışma alanında **commit edilmemiş değişiklikler içeriyor** (bu plandan bağımsız, önceden var olan düzenlemeler). Altın referans, uçacak olan hâlden — yani çalışma alanındaki güncel dosyadan — yakalanmalıdır. Görev 6'nın diff incelemesi bu değişikliklerle karışmasın diye, Görev 1'den önce `src/main.cpp`'nin mevcut hâlinin commit edilmesi önerilir.
 
 ---
 
