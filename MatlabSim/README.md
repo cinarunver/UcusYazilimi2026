@@ -32,8 +32,9 @@ ve grafikleri `cikti/` altına kaydeder. Değiştirip tekrar çalıştıracağı
 ### 1. Roketi değiştirmek → `config/roket_params.m`
 
 İtki eğrisi, kütle, Cd, paraşüt `Cd·A`, rüzgâr. Bunlar **roketin** özellikleri,
-yazılımın değil. Şu an içindekiler temsili değerlerdir — gerçek roket verilerini
-buraya yazman gerekiyor.
+yazılımın değil. İçindekiler `config/rocket.ork` dosyasından çıkarılmış gerçek
+"Akdoğan" verileridir (`[ORK]` etiketli satırlar). `[TAHMIN]` etiketli olanlar
+hâlâ varsayım — ölçtüğünde güncelle.
 
 ### 2. Algoritmayı değiştirmek → `oyna.m` içindeki `ayar` yapısı
 
