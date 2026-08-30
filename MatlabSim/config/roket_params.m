@@ -19,13 +19,47 @@ p.m_kalkis     = 23.166;    % kg    kalkis kutlesi (yakit dahil)      [ORK]
 p.m_yakit      =  4.103;    % kg    harcanan yakit kutlesi            [ORK]
 p.cap          =  0.115;    % m     govde capi (aftradius 0.0575*2)   [ORK]
 p.uzunluk      =  2.75;     % m     burun 0.32 + ust 1.40 + alt 1.03  [ORK]
-p.Cd           =  0.515;    % -     govde surukleme katsayisi   [KALIBRE EDILDI]
+p.Cd           =  0.500;    % -     govde surukleme katsayisi   [KALIBRE EDILDI]
                             %       OpenRocket apogee'sine (3703.3 m) gore
                             %       supuruldu; hucum acisina bagli alan
                             %       modeli eklendikten sonra yeniden ayarlandi.
-p.CP_CG        =  0.60;     % m     basinc merkezi - agirlik merkezi  [TAHMIN]
-p.Cn_alpha     =  9.0;      % 1/rad normal kuvvet egimi               [TAHMIN]
+p.CP_CG        =  0.27;     % m     basinc merkezi - agirlik merkezi     [ORK]
+                            %       .ork: CP=1.626 m, CG=1.356 m (apogee civari).
+                            %       Onceki 0.60 tahmini weathercocking'i IKI KAT
+                            %       abartip apogee egimini 52 dereceye cikariyordu
+                            %       (OpenRocket referansi 24.9 derece).
+p.Cn_alpha     =  6.4;      % 1/rad normal kuvvet egimi                  [ORK]
+                            %       .ork t=20s: CN=0.112 @ AoA=1.0 deg -> 6.4/rad
+p.J            = 10.05;     % kg*m^2 boyuna atalet momenti               [ORK]
 p.sonumleme    =  0.35;     % -     yunuslama sonumleme katsayisi     [TAHMIN]
+p.aero_moment_min_hiz = 5;  % m/s   bu hizin altinda aerodinamik moment yok
+
+% --- EGIM DUZELTME KATSAYISI (model sinirinin telafisi) --------------
+%  2D yunuslama modeli apogee civarindaki egimi DUSUK tahmin ediyor:
+%      OpenRocket referansi (6 m/s ruzgar)  t=27.8 s -> 24.7 derece
+%      bu model, fiziksel Cn_alpha=6.4 ile  t=27.8 s -> 11.8 derece
+%  Sebep: apogee civarinda dinamik basinc cok dusuk ve hucum acisi buyuk;
+%  bu rejimi 2D dogrusal moment modeli yakalayamiyor. Cn_alpha'yi 35'e
+%  cikarmak sayiyi tutturuyor ama fiziksel degil (.ork'tan gercek deger 6.4)
+%  ve tirmanis egimini bozuyor.
+%
+%  ONEMLI: egimi DUSUK tahmin etmek, MAX_EGLIM guvenlik kapisinin marjini
+%  OLDUGUNDAN GENIS gosterir — yani tehlikeli yonde yanilir. Bu yuzden
+%  ALGORITMAYA GIDEN egim olcumu bu katsayiyla olceklenir; fizik (yorunge,
+%  surukleme) olceklenmemis gercek aciyi kullanmaya devam eder.
+%
+%  >>> VARSAYILAN 1.0 — DUZELTME KAPALI <<<
+%  Katsayi TEK bir kosulda (6 m/s ruzgar, nominal) kalibre edildi ve her
+%  kosula uygulanmasi savunulamaz: dusuk ruzgarli kosumlarda bile gorulen
+%  egimi 98 dereceye cikarip kapiyi haksiz yere kapatiyor. Olculen duyarlilik
+%  (20 kosum, ortak tohum):
+%       duzeltme 1.00 -> drogue kacirma  6/20
+%       duzeltme 1.50 -> drogue kacirma 16/20
+%       duzeltme 2.09 -> drogue kacirma 16/20
+%  Yani MAX_EGLIM marjina dair her sonuc bu katsayiya bagli. Bu model o
+%  soruyu CEVAPLAYAMAZ (bkz. BULGULAR.md, Bulgu 3). Katsayiyi duyarlilik
+%  incelemesi icin degistirebilirsin; varsayilan olarak fizik bozulmaz.
+p.egim_duzeltme = 1.0;
 p.Cd_yan       =  1.20;     % -     yanal (capraz akis) surukleme kats. [TAHMIN]
                             %       Silindir capraz akisi ~1.2. Takla halinde
                             %       govde yandan gelir; etkin alan eksenel
@@ -109,7 +143,10 @@ p.aci_sigma       = 0.30;   % derece  yonelim gurultusu               [TAHMIN]
 % ====================================================================
 %  SIMULASYON
 % ====================================================================
-p.dt_fizik     = 0.001;     % s   RK4 entegrasyon adimi (1 kHz)
+p.dt_fizik     = 0.001;     % s   RK4 adimi — tirmanis/apogee (1 kHz)
+p.dt_fizik_inis= 0.010;     % s   RK4 adimi — parasut altinda (100 Hz).
+                            %     Inis dinamigi yavas; ucus suresinin %90'i
+                            %     bu fazda gectigi icin kosumu ~5x hizlandirir.
 p.dt_sensor    = 0.010;     % s   sensor + algoritma adimi (100 Hz)
 p.t_bitis      = 400;       % s   guvenlik ust siniri
 p.tohum        = 42;        % -   rastgele tohum (tekrarlanabilirlik icin)

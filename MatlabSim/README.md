@@ -8,8 +8,13 @@ içinde koşturur. Algoritma yeniden yazılmadı: `ucus_mex`, doğrudan
 
 ```matlab
 cd MatlabSim
-oyna
+oyna                  % tek uçuş + grafikler
+kos_senaryolar()      % 10 doğrulama senaryosu
+monte_carlo([], 50)   % belirsizlik altında 50 uçuş
+supur('apogee_irtifa_farki', [5 10 20 30], 20)   % eşik süpürme
 ```
+
+Bulgular için [BULGULAR.md](BULGULAR.md).
 
 `oyna.m` üç uçuş koşar (nominal, eşik denemesi, arıza senaryosu), özetleri yazar
 ve grafikleri `cikti/` altına kaydeder. Değiştirip tekrar çalıştıracağın dosya budur.
@@ -26,6 +31,12 @@ ve grafikleri `cikti/` altına kaydeder. Değiştirip tekrar çalıştıracağı
 | `mex/ucus_mex.cpp` | MATLAB ↔ C++ köprüsü. |
 | `mex/derle.m` | Köprüyü derler. |
 | `test_mex.m` | Köprünün doğrulaması (18 test). |
+| `senaryolar.m` | 10 senaryoluk doğrulama kütüphanesi. |
+| `kos_senaryolar.m` | Senaryoları koşar, tablo + şekil üretir. |
+| `ariza_yok.m` | Arıza enjeksiyonu alanları (baro donması, IMU doyma, takla…). |
+| `monte_carlo.m` | Belirsizlik dağılımları altında N uçuş. |
+| `supur.m` | Tek eşiği ortak rastgele sayılarla süpürür. |
+| **`BULGULAR.md`** | **Simülasyondan çıkan bulgular — önce bunu oku.** |
 
 ## İki ayrı şeyi değiştirebilirsin
 
