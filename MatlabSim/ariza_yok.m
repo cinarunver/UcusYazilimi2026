@@ -18,4 +18,13 @@ function a = ariza_yok()
     a.takla_t           = NaN;   % s      bu anda ani acisal hiz enjekte edilir
     a.takla_omega       = 0;     % rad/s  enjekte edilen acisal hiz
     a.drogue_calismadi  = false; % true   emir verilir ama drogue ACILMAZ (funye arizasi)
+    a.imu_z_ters        = false; % true   BNO055 Z ekseni TERS isaretli monte/yapilandirilmis.
+                                 %        ucus_algoritmasi.h icindeki
+                                 %        "[TODO] BNO055 Z-ekseni yonu dogrulanmali!"
+                                 %        notunun bedelini olcer.
+    a.baro_ofset        = 0;     % m      referans basinc kaymasindan dogan SABIT irtifa
+                                 %        yanlisligi. Kart padde beklerken hava
+                                 %        basinci degisirse referans_basinc bayatlar;
+                                 %        ~8.3 m/hPa. + ise irtifa oldugundan YUKSEK
+                                 %        okunur.
 end

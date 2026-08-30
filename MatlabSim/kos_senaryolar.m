@@ -20,6 +20,7 @@ function T = kos_senaryolar(ayar, ciz_mi)
     ad = strings(n,1); apogee = zeros(n,1); drogue_z = zeros(n,1);
     gecikme = zeros(n,1); ana_z = zeros(n,1); inis = zeros(n,1);
     surukl = zeros(n,1); sonuc = strings(n,1); not_ = strings(n,1);
+    ana_hiz = nan(n,1);
 
     fprintf('\n');
     for i = 1:n
@@ -33,6 +34,7 @@ function T = kos_senaryolar(ayar, ciz_mi)
         ana_z(i)   = s.ana_z;
         inis(i)    = s.inis_hizi;
         surukl(i)  = s.suruklenme;
+        ana_hiz(i) = s.ana_hiz;
 
         [ok, aciklama] = degerlendir(s, S(i));
         sonuc(i) = ok;  not_(i) = aciklama;
@@ -45,15 +47,15 @@ function T = kos_senaryolar(ayar, ciz_mi)
         end
     end
 
-    T = table(ad, apogee, drogue_z, gecikme, ana_z, inis, surukl, sonuc, not_, ...
+    T = table(ad, apogee, drogue_z, gecikme, ana_z, ana_hiz, inis, surukl, sonuc, not_, ...
         'VariableNames', {'Senaryo','Apogee_m','Drogue_m','Gecikme_s', ...
-                          'Ana_m','Inis_ms','Suruklenme_m','Sonuc','Not'});
+                          'Ana_m','AnaAcilisHiz_ms','Inis_ms','Suruklenme_m','Sonuc','Not'});
 
     fprintf('\n');
-    disp(T(:, {'Senaryo','Apogee_m','Drogue_m','Gecikme_s','Ana_m','Inis_ms','Sonuc'}));
+    disp(T(:, {'Senaryo','Apogee_m','Drogue_m','Gecikme_s','Ana_m','AnaAcilisHiz_ms','Inis_ms','Sonuc'}));
 
-    gecen = sum(sonuc == "GECTI");
-    fprintf('\n  %d/%d senaryo bekleneni verdi.\n\n', gecen, n);
+    fprintf('\n  GECTI: %d   INCELE: %d   KALDI: %d   (toplam %d)\n\n', ...
+            sum(sonuc == "GECTI"), sum(sonuc == "INCELE"), sum(sonuc == "KALDI"), n);
 end
 
 % =====================================================================
@@ -91,6 +93,11 @@ function [ok, aciklama] = degerlendir(s, sen)
     ihlal = strings(0);
     if isnan(s.ana_t),       ihlal(end+1) = "ana parasut acilmadi"; end
     if s.inis_hizi > 10,     ihlal(end+1) = sprintf("inis %.1f m/s", s.inis_hizi); end
+    % Ana parasutun balistik hizda acilmasi kurtarma SAYILMAZ: model
+    % yirtilmayi gormez, gercek donanim gorur (bkz. Bulgu 7).
+    if ~isnan(s.ana_hiz) && s.ana_hiz > 30
+        ihlal(end+1) = sprintf("ana parasut %.0f m/s'de acildi", s.ana_hiz);
+    end
 
     % Yukselirken veya asiri egimde atesleme = guvenlik ihlali
     if ~isnan(s.drogue_emir_t)
@@ -100,7 +107,26 @@ function [ok, aciklama] = degerlendir(s, sen)
         end
     end
 
-    if isempty(ihlal)
+    if ~isempty(ihlal)
+        ok = "KALDI";
+        aciklama = strjoin(ihlal, "; ");
+        return;
+    end
+
+    % Kurtarma calisti. Simdi DIKKAT isteyen ama basarisizlik olmayan
+    % durumlar: sert kisit degil, muhendislik uyarisi.
+    uyari = strings(0);
+    if ~isnan(s.ana_t) && abs(s.ana_z - 550) > 50
+        uyari(end+1) = sprintf("ana parasut GERCEKTE %.0f m (hedef 550)", s.ana_z);
+    end
+    if ~isnan(s.apogee_gecikme) && abs(s.apogee_gecikme) > 5
+        uyari(end+1) = sprintf("drogue %.1f s gec — acilis hizi yuksek", s.apogee_gecikme);
+    end
+
+    if ~isempty(uyari)
+        ok = "INCELE";
+        aciklama = strjoin(uyari, "; ");
+    else
         ok = "GECTI";
         if isnan(s.drogue_emir_t)
             aciklama = "drogue emri yok — ana parasut yedek tetikle acildi";
@@ -109,9 +135,6 @@ function [ok, aciklama] = degerlendir(s, sen)
         else
             aciklama = sprintf("gecikme %+.2f s", s.apogee_gecikme);
         end
-    else
-        ok = "KALDI";
-        aciklama = strjoin(ihlal, "; ");
     end
 end
 

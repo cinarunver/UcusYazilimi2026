@@ -86,6 +86,27 @@ class SimpleKalmanFilter {
 #define MAX_EGLIM             75.0f  // derece - Bu acidan fazla egimde apogee sayilmaz (guvenlik)
 #define AYRILMA2_MESAFE      550.0f  // m     - Bu irtifanin altinda ana parasut acilir
 #define APOGEE_MIN_IRTIFA  AYRILMA2_MESAFE  // m - Bu irtifa asilmadan apogee ARANMAZ
+
+// BULGU 1 — ana parasut YEDEK tetiginin arama tabani.
+// Eskiden yedek tetik de AYRILMA2_MESAFE'ye baglinydi. Bunun bilinmeyen
+// maliyeti su senaryoda ortaya cikti: motor erken sonup apogee 476 m'de
+// kalirsa (a) apogee arama tabani (550 m) drogue'u bloke eder — DOGRU ve
+// amaclanan davranis, (b) ama yedek tetik de ayni tabana bagli oldugu icin
+// ana parasut da acilmaz. Sonuc: 62 m/s ile yere carpma, IKI kurtarma yolu
+// birden kayip.
+//
+// NEDEN AYRI BIR SABIT: apogee arama tabani rampa korumasidir ve YUKSEK
+// kalmalidir (bkz. APOGEE_MIN_IRTIFA gerekcesi). Yedek tetik ise son caredir
+// ve DUSUK olmalidir. Ikisi ayni sayi olmak zorunda degil; oyle olmalari
+// tasarim karari degil, `#define APOGEE_MIN_IRTIFA AYRILMA2_MESAFE`
+// satirinin yan etkisiydi.
+//
+// NEDEN 200 m: bu irtifanin altinda ana parasut zaten sisemez, dolayisiyla
+// daha da dusurmenin kazanci yok. Yukarisi guvenli: tetik ayrica
+// `durum >= YUKSELIYOR` ve `max_irtifa` gercekten bu tabani gecmis olmasini
+// sart kosar; max_irtifa yalnizca YUKSELIYOR icinde ve gercek baro
+// okumasindan buyudugu icin rampada bu sart saglanamaz.
+#define YEDEK_TETIK_TABAN    200.0f  // m     - Yedek tetik bu irtifa asilmadan gecerli degil
 #define INIS_HIZ_ESIGI         2.0f  // m/s   - Bu degerin alti = yerde sayilir
 #define INIS_IRTIFA_ESIGI     20.0f  // m     - Bu irtifanin alti = yerde sayilir
 
@@ -113,6 +134,7 @@ struct UcusAyar {
     float max_eglim              = MAX_EGLIM;
     float apogee_min_irtifa      = APOGEE_MIN_IRTIFA;
     float ayrilma2_mesafe        = AYRILMA2_MESAFE;
+    float yedek_tetik_taban      = YEDEK_TETIK_TABAN;
     float inis_hiz_esigi         = INIS_HIZ_ESIGI;
     float inis_irtifa_esigi      = INIS_IRTIFA_ESIGI;
 
@@ -313,11 +335,39 @@ static inline void ucus_adim(UcusHal& h, const UcusGirdi& g, UcusCikti& c) {
     // --- 3) UCUS ALGORITMASI ---
     switch (h.durum) {
         case HAZIR:
-            // Kalkis tespiti: Z ekseninde yeterli ivme -> YUKSELIYOR
-            // [ TODO ] BNO055 Z-ekseni yonu dogrulanmali!
-            if (ivme[2] > a.kalkis_ivme_esigi) {
-                h.durum       = YUKSELIYOR;
-                h.kalkis_t_us = g.t_us;   // motor yanma onlem suresi (bit 1) referansi
+            // ================================================================
+            // KALKIS TESPITI — BILESKE IVME (yonelimden BAGIMSIZ)
+            // ================================================================
+            // BULGU 6: eskiden kosul `ivme[2] > esik` idi ve kodda su not
+            // duruyordu: "[TODO] BNO055 Z-ekseni yonu dogrulanmali!". O
+            // TODO'nun bedeli olculdu ve tek eksen isareti TUM kurtarmayi
+            // dusuruyordu:
+            //   Z ekseni ters bagliysa ivme[2] hep negatif okunur -> kalkis
+            //   hic yakalanmaz -> durum HAZIR'da kalir -> max_irtifa yalnizca
+            //   YUKSELIYOR icinde guncellendigi icin 0'da kalir -> ana parasut
+            //   yedek tetigi de (durum >= YUKSELIYOR) kilitli kalir.
+            //   Simulasyonda roket 3704 m'ye cikip geri indi, yazilim hala
+            //   "rampadayim" diyordu; iki parasut de acilmadi (208 m/s).
+            //
+            // Cozum: buyukluk kullan. BNO055 LINEARACCEL yercekimini zaten
+            // cikarir, dolayisiyla rampada bileske ~0'dir ve motor atesleyince
+            // eksen yonelimi ne olursa olsun esigi asar. Isaret hatasina,
+            // eksen permutasyonuna ve montaj acisina bagisik.
+            //
+            // NEDEN GUVENLI: yanlis bir kalkis tespiti tek basina bir sey
+            // ATESLEMEZ. YUKSELIYOR'a gecmek yalnizca apogee ARAMASINI acar;
+            // arama da `max_irtifa > apogee_min_irtifa` (550 m) tabanina
+            // baglidir. Rampada sarsintiyla YUKSELIYOR'a gecilse bile o taban
+            // asilmadigi icin funye emri uretilmez.
+            // ================================================================
+            {
+                float ivme_buyuklugu = sqrtf(ivme[0]*ivme[0] +
+                                             ivme[1]*ivme[1] +
+                                             ivme[2]*ivme[2]);
+                if (ivme_buyuklugu > a.kalkis_ivme_esigi) {
+                    h.durum       = YUKSELIYOR;
+                    h.kalkis_t_us = g.t_us;   // motor yanma onlem suresi (bit 1) referansi
+                }
             }
             break;
 
@@ -395,9 +445,35 @@ static inline void ucus_adim(UcusHal& h, const UcusGirdi& g, UcusCikti& c) {
     //
     // SINIRI: drogue hic acilmadiysa roket bu irtifada cok hizlidir ve ana
     // parasut acilista yirtilabilir. Yine de kurtarma sansi verir.
+    //
+    // BULGU 1 — TABAN ARTIK apogee arama tabani DEGIL, yedek_tetik_taban.
+    // Eskiden burada `max_irtifa > a.ayrilma2_mesafe` yaziyordu; yani apogee
+    // 550 m'nin altinda kalan her ucusta bu son care de kilitliydi. Ikisi
+    // ayrildi: arama tabani yuksek kalir (rampa korumasi), yedek tetik
+    // asagi iner (kurtarma sansi). Gerekce YEDEK_TETIK_TABAN tanimininda.
+    //
+    // >>> ALCALMA TEYIDI — TABANI DUSURMENIN BEDELI <<<
+    // Yukaridaki "kosul kendi kendini yukselise karsi korur" gerekcesi
+    // `max_irtifa > X` ile `irtifa < X` AYNI esik oldugu icin gecerliydi:
+    // iki sart ancak esik bir kez asilip sonra altina inildiginde ayni anda
+    // saglanabiliyordu. Taban 550'den 200'e indirilince bu koruma KIRILDI —
+    // 200-550 m arasinda TIRMANIRKEN de iki sart ayni anda saglanir hale
+    // geldi ve geriye tek koruma olarak `dikey_hiz` kaldi.
+    //
+    // Bedeli simulasyonda olculdu: baro gurultusu buyudugunde (sigma 4 m)
+    // gurultulu turev `dikey_hiz`i anlik olarak esigin altina dusuruyor ve
+    // ana parasut TIRMANIRKEN aciliyor — apogee 3704 m yerine 324 m.
+    //
+    // Cozum, kaybolan korumayi esikten BAGIMSIZ bicimde geri koymak: roketin
+    // gercekten alcaldigini teyit et. Tirmanista max_irtifa irtifayla birlikte
+    // arttigi icin fark sifira yakin kalir ve bu sart saglanamaz. Kriter A'nin
+    // ta kendisi; yedek tetik boylece (A && B && taban) olur — eksik olan tek
+    // sey apogee kriterinin egim kapisidir (D), ki bu tetigin varlik sebebi
+    // zaten D'nin bloke etmesidir.
     if (!h.ayrilma2 &&
         (h.durum >= YUKSELIYOR) &&
-        (h.max_irtifa > a.ayrilma2_mesafe) &&
+        (h.max_irtifa > a.yedek_tetik_taban) &&
+        (h.max_irtifa - irtifa > a.apogee_irtifa_farki) &&   // ALCALMA TEYIDI
         (irtifa < a.ayrilma2_mesafe) &&
         (dikey_hiz < a.min_dikey_hiz)) {
         c.funye2_emir = true;

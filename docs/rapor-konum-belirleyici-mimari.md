@@ -29,7 +29,7 @@ Her iki sistemde de aynı donanım ailesi kullanılmıştır:
 
 Veri akışı, her iki gövdede de aynı iki aşamalı mimariyle çalışır:
 
-**1. Üretim (ESP32 Çekirdek 0).** Sensörler ve GPS okunur, barometrik irtifa Kalman filtresinden geçirilir ve tüm alanlar tam çözünürlüklü (float) bir yapıya doldurulur. Bu yapı bir FreeRTOS kuyruğuna bırakılır.
+**1. Üretim (ESP32 Çekirdek 0).** Sensörler ve GPS okunur. Filtreleme alan bazında uygulanır: yalnızca skaler Kalman filtresinin varsayımlarını karşılayan büyüklükler filtreden geçirilir, **konum ve yönelim kuaterniyonu kasıtlı olarak ham bırakılır** (gerekçe: §Filtreleme Politikası). Tüm alanlar tam çözünürlükte bir yapıya doldurulur — enlem ve boylam `double`, diğer alanlar `float`; konumun `float`'ta taşınması 41° civarında ~42 cm çözünürlük kaybı demek olurdu. Bu yapı bir FreeRTOS kuyruğuna bırakılır.
 
 **2. Dağıtım (ESP32 Çekirdek 1).** Kuyruktan alınan her paket, tam çözünürlükte SD karta CSV olarak yazılır (kara kutu). Aynı paket, belirli bir seyreltme oranında sabit noktalı (fixed-point) tam sayı formatına dönüştürülüp çerçevelenerek LoRa'ya verilir. Çerçeveleme; iki senkronizasyon baytı, uzunluk baytı, faydalı yük ve CRC16-CCITT'ten (polinom 0x1021, başlangıç 0xFFFF) oluşur. UART'a yazma işlemi sürücünün halka tamponuna bırakılıp hemen dönüldüğü için, gönderim süresi boyunca veri üretim döngüsü bloklanmaz.
 
@@ -104,7 +104,7 @@ flowchart LR
         GG["GY-NEO-7M GPS<br/>UART2 @ 9600<br/>enlem • boylam"]
         GS["BME280<br/>basınç • sıcaklık • nem • irtifa"]
         GI["BNO055 IMU<br/>ivme • jiroskop"]
-        GC0["Çekirdek 0 — KALMAN<br/>iletilen TÜM alanlar filtreli"]
+        GC0["Çekirdek 0 — KALMAN<br/>(GPS ve kuaterniyon hariç)"]
         GD["İniş tespiti<br/>baro + IMU durgunluk"]
         GQ(["FreeRTOS Kuyruğu"])
         GC1["Çekirdek 1<br/>kuantize → çerçevele"]
@@ -112,13 +112,13 @@ flowchart LR
         GL["E32-433T30D<br/>433 MHz • 1 W • FEC"]
         GB["Kurtarma Beacon<br/>buzzer + LED<br/>200 ms / 1 sn"]
         GS -->|"filtrelenir"| GC0
-        GG -->|"filtrelenir<br/>(ölçekli domen)"| GC0
+        GG -->|"HAM<br/>(filtrelenmez)"| GC0
         GI -->|"filtrelenir"| GC0
         GC0 --> GD
         GC0 --> GQ --> GC1
         GQ --> GSD
         GD -->|"iniş kilidi"| GB
-        GC1 -->|"29 B çerçeve"| GL
+        GC1 -->|"37 B çerçeve"| GL
     end
 
     RFA(("RF Kanal A"))
@@ -154,10 +154,10 @@ flowchart LR
 | 0–1 | `basinc` | uint16 | ×10 | **Kalman** (doğrudan) | hPa |
 | 2–3 | `sicaklik` | int16 | ×100 | **Kalman** (doğrudan) | °C |
 | 4–5 | `nem` | uint16 | ×100 | **Kalman** (doğrudan) | % bağıl nem |
-| 6–7 | `irtifa` | int16 | ×10 | **Kalman** (doğrudan) | m — barometrik irtifa |
+| 6–7 | `irtifa` | int16 | ×10 | Filtreli basınçtan türetilir | m — barometrik irtifa |
 | 8–9 | `yogunluk` | uint16 | ×1000 | filtreli girdilerden türetilir | kg/m³ — **nemli hava yoğunluğu** |
-| 10–13 | `gpsEnlem` | int32 | ×10⁷ | **Kalman** (ölçekli domen) | ° — **konum bilgisi** |
-| 14–17 | `gpsBoylam` | int32 | ×10⁷ | **Kalman** (ölçekli domen) | ° — **konum bilgisi** |
+| 10–13 | `gpsEnlem` | int32 | ×10⁷ | **Ham** (kasıtlı — bkz. §Konum) | ° — **konum bilgisi** |
+| 14–17 | `gpsBoylam` | int32 | ×10⁷ | **Ham** (kasıtlı — bkz. §Konum) | ° — **konum bilgisi** |
 | 18–19 | `ivmeToplam` | int16 | ×100 | **Kalman** (bileşen bazında) | m/s² — bileşke ivme |
 | 20–21 | `qx` | int16 | ×10000 | BNO055 füzyon | yönelim kuaterniyonu |
 | 22–23 | `qy` | int16 | ×10000 | BNO055 füzyon | yönelim kuaterniyonu |
@@ -166,7 +166,7 @@ flowchart LR
 | 28–29 | `gyroY` | int16 | ×10 | **Kalman** (doğrudan) | rad/s |
 | 30–31 | `gyroZ` | int16 | ×10 | **Kalman** (doğrudan) | rad/s |
 
-**Havadan iletilen alanların tamamı Kalman filtresinden geçmiş değerlerdir**; pakete hiçbir ham ölçüm doğrudan yazılmaz. Yoğunluk da filtrelenmiş basınç/sıcaklık/nem üçlüsünden hesaplanır; türetilmiş değere ikinci bir filtre uygulanmaz (yalnız gecikme bindirirdi).
+Havadan iletilen alanların çoğu Kalman filtresinden geçmiş değerlerdir; **konum (enlem/boylam) ve yönelim kuaterniyonu ise kasıtlı olarak ham iletilir** — her ikisi de skaler Kalman filtresinin varsayımlarını karşılamaz (gerekçe: §Konum ve §Yönelim). Yoğunluk, filtrelenmiş basınç/sıcaklık/nem üçlüsünden hesaplanır; türetilmiş değere ikinci bir filtre uygulanmaz (yalnız gecikme bindirirdi).
 
 Kuaterniyonun `w` bileşeni gönderilmez: uçuş bilgisayarı `w ≥ 0` olacak şekilde işaret normalizasyonu yaptığından yer istasyonu `w = √(1 − x² − y² − z²)` ile tek anlamlı geri hesaplar. Böylece hem bir alan tasarrufu sağlanır hem de dik uçuşta Euler gösteriminin gimbal lock problemi tamamen ortadan kalkar.
 
@@ -216,53 +216,74 @@ Tetens ara değerleri (`es`, `pv`) havadan **gönderilmez** — basınç, sıcak
 
 ## Filtreleme Politikası
 
-Görev yükünde **havadan iletilen her büyüklük Kalman filtresinden geçirilir**; sensörden okunan hiçbir ham değer doğrudan pakete yazılmaz. Her büyüklük kendi bağımsız filtresine sahiptir ve filtre parametreleri o büyüklüğün fiziksel değişim hızına göre ayrı ayrı ayarlanmıştır. SD kart kaydı da aynı filtrelenmiş değerleri, ancak kuantize edilmemiş tam çözünürlükte tutar; kayıt ile telemetri arasındaki tek fark çözünürlük ve alan sayısıdır, filtreleme yaklaşımı ikisinde de aynıdır.
+Görev yükünde filtreleme **alan bazında** karara bağlanmıştır: bir büyüklük ancak skaler Kalman filtresinin varsayımlarını (tek boyutlu, diğerlerinden bağımsız, gürültülü, dahili olarak filtrelenmemiş ölçüm) karşılıyorsa filtrelenir. Bu koşulu sağlayan büyüklükler kendi bağımsız filtrelerine sahiptir ve parametreleri o büyüklüğün fiziksel değişim hızına göre ayrı ayrı ayarlanmıştır; sağlamayanlar (**konum ve yönelim**) kasıtlı olarak ham iletilir. SD kart kaydı da pakete giren değerlerin aynısını, ancak kuantize edilmemiş tam çözünürlükte tutar; kayıt ile telemetri arasındaki tek fark çözünürlük ve alan sayısıdır, filtreleme yaklaşımı ikisinde de aynıdır.
 
-**Çevresel büyüklükler (BME280).** Basınç, sıcaklık, bağıl nem ve barometrik irtifa, her biri kendi filtresinden geçer. Bu büyüklükler tek boyutlu, birbirinden bağımsız ve gürültülü skaler ölçümler olduğundan skaler Kalman filtresi için doğrudan uygundur. Sıcaklık fiziksel olarak en yavaş değişen büyüklük olduğundan en dar ölçüm belirsizliği ve en küçük süreç gürültüsü ile çalıştırılır; irtifa ise iniş sırasındaki hızlı değişimi takip edebilmesi için daha gevşek parametrelerle çalışır.
+**Çevresel büyüklükler (BME280).** Basınç, sıcaklık ve bağıl nem, her biri kendi filtresinden geçer. Bu büyüklükler tek boyutlu, birbirinden bağımsız ve gürültülü skaler ölçümler olduğundan skaler Kalman filtresi için doğrudan uygundur.
+
+**Barometrik irtifa için ayrı filtre yoktur; filtrelenmiş basınçtan türetilir.** Basınç ve irtifa aynı fiziksel büyüklüğün iki görünümüdür — irtifa okuma fonksiyonu içeride basıncı yeniden ham okuyup barometrik formülü uygular. İkisini birbirinden bağımsız iki filtreden geçirmek, farklı zaman sabitleriyle yumuşatılmış ve **birbiriyle tutarsız** iki alan üretiyordu: yerde `basinc` alanından `irtifa` alanını geri türetmek mümkün değildi. Artık yalnız basınç filtrelenir, irtifa doğrudan filtrelenmiş basınçtan hesaplanır; tutarlılık inşaat gereği sağlanır ve türetilmiş değere ikinci bir filtre binmez.
+
+Bu değişiklik basınç filtresinin yeniden ayarlanmasını gerektirdi. Önceki ölçüm belirsizliği (2,0 hPa) sensörün gerçek gürültüsünün (~0,02 hPa) yaklaşık yüz katıydı; bu filtrede kazanç `K = err_est/(err_est + e_mea)` olduğundan ve kestirim belirsizliği her adımda küçülüp yalnız süreç gürültüsü kadar geri beslendiğinden, ölçüm belirsizliğinin gerçek gürültüden çok büyük olması kazancı sıfıra düşürüp **filtreyi son değerinde dondurur** — roket kartında irtifa için tespit edilip geri alınan hatanın aynısı. Yeni değerler tahmin değil, roket kartında sahada doğrulanmış irtifa filtresinin basınç domenine çevrilmiş halidir: deniz seviyesinde duyarlılık |dh/dP| ≈ 8,43 m/hPa olduğundan ölçüm belirsizliği 1,5 m ÷ 8,43 ≈ 0,178 hPa, süreç gürültüsü 0,1 ÷ 8,43 ≈ 0,0119 hPa alınır. Böylece türetilen irtifa, doğrulanmış filtrenin dinamiğini korur. (Barometrik dönüşüm doğrusal olmadığından duyarlılık irtifayla ~%10 değişir; 0–1000 m bandında ihmal edilebilir.)
 
 **Atalet büyüklükleri (BNO055).** İvmeölçerin ve jiroskopun üç ekseni de kendi bağımsız filtrelerinden geçirilir; filtre parametreleri roket kartındaki (UKB) karşılıklarıyla birebir aynı tutulmuştur; böylece iki gövdeden gelen atalet verileri aynı ölçüde yumuşatılmış olur ve karşılaştırılabilir kalır. Havadan iletilen bileşke ivme büyüklüğü, bu **filtrelenmiş** eksen değerlerinden hesaplanır. İniş tespiti de aynı filtrelenmiş değerleri kullanır: iniş kararı, ivme ve jiroskop büyüklüklerinin belirli bir süre boyunca kesintisiz olarak eşik altında kalmasına bakılarak verildiğinden, gürültünün azalması durgunluk penceresinin gereksiz yere sıfırlanmasını önler ve kararı daha güvenilir hale getirir.
 
-**Konum (GPS).** Enlem ve boylam da filtrelenir, ancak bu alanda filtrenin doğrudan derece cinsinden uygulanması mümkün değildir. Coğrafi koordinat çok küçük adımlarla değişir (10⁻⁵ derece yaklaşık 1,1 metreye karşılık gelir); filtre doğrudan dereceye uygulandığında ardışık kestirimler arasındaki fark süreç gürültüsü terimini besleyemeyecek kadar küçük kalır, kestirim belirsizliği sıfıra iner ve Kalman kazancı sönerek **filtre ilk konum çözümünde donar** — sonrasında gerçek hareketi takip edemez. Bu nedenle ilk geçerli konum çözümü referans nokta olarak alınır ve filtreleme, bu referansa göre metre mertebesine ölçeklenmiş bir domende yapılır; çıkış tekrar dereceye çevrilir. Ayrıca filtre yalnızca **yeni bir konum çözümü geldiğinde** güncellenir; GPS alıcısı telemetri döngüsünden çok daha yavaş güncellendiğinden, aynı değerin döngü hızında tekrar tekrar filtreye beslenmesi de aynı donma etkisini yaratırdı.
+**Konum (GPS).** Enlem ve boylam **kasıtlı olarak filtrelenmez**; alıcıdan okunan konum çözümü pakete ve kayda ham haliyle yazılır. Konuma skaler Kalman filtresi uygulamak üç ayrı nedenle yanlıştır:
 
-Bu tasarım kurtarma senaryosunda özellikle avantajlıdır: görev yükü indikten sonra hareketsiz kaldığı için filtre gerçek dinlenme konumuna yakınsar ve GPS gürültüsünü ortalayarak sabit, güvenilir bir kurtarma koordinatı üretir.
+1. **Ölçüm zaten filtrelidir.** GY-NEO-7M kendi navigasyon çözümünü üretir; NMEA cümlesinden okunan enlem/boylam ham pseudorange değil, alıcının dahili kestirim süzgecinden çıkmış bir konumdur. Üzerine ikinci bir filtre koymak yeni bilgi katmaz, yalnızca gecikme bindirir.
+2. **Tek durumlu filtre konumu takip edemez.** Yazılımda kullanılan skaler filtrenin durumu yalnızca konumdur. Gerçek bir konum kestiricisinin durum vektörü en az \[konum, hız] olmalıdır ki tahmin adımı `konum ← konum + hız·Δt` ile gerçek hareketi öngörebilsin. Hız durumu bulunmayan bir filtre gerçek hareketi ölçüm gürültüsü sayarak bastırır ve **hıza orantılı bir gecikme** üretir; iniş sırasında raporlanan iz, gerçek konumun sürekli gerisinde kalır.
+3. **Eksenler bağımsız değildir.** Enlem ve boylamı iki ayrı skaler filtreden geçirmek konum hatasının çapraz kovaryansını tümüyle ihmal eder. Bu işlem matematiksel olarak Kalman filtresi değil, adaptif kazançlı bir alçak geçiren filtredir; "Kalman" adıyla anılması yanıltıcıdır.
+
+Kurtarma amaçlı konum verisinde belirleyici ölçüt yumuşaklık değil **doğruluktur**; bu nedenle gerçek ölçümün korunması tercih edilmiştir. Aynı gerekçe roket kartı (UKB) için de geçerlidir ve iki gövdede de GPS ham iletilir. Konum gürültüsünün bastırılması istenirse doğru yaklaşım bu skaler filtre değil, hız durumu içeren bir sabit-hız (CV) modeli — ya da yalnızca iniş sonrası hareketsizlik tespit edildikten sonra devreye giren bir sabit-konum ortalamasıdır.
 
 **Doğrudan iletilmeyen ara büyüklükler.** Dikey hız, Kalman'dan geçmiş ardışık irtifa değerlerinin zamana göre farkı olarak hesaplanır; ancak bu değer havadan gönderilmez, yalnızca iniş tespitinde kullanılır. İvme eksenleri (X/Y/Z) de bant genişliği nedeniyle havadan tek tek gönderilmez, yerine bileşke büyüklükleri tek alanda iletilir; üç eksenin tamamı SD kart kaydında tam çözünürlükte saklanır.
 
-**İki sistemin karşılaştırması.** Roket tarafında yönelim kuaterniyonu bilinçli olarak filtresiz bırakılmıştır; kuaterniyon bileşenleri birim uzunluk kısıtıyla birbirine bağlı olduğundan, her bileşeni ayrı bir skaler filtreden geçirmek bu kısıtı bozar ve fiziksel olarak geçersiz bir yönelim üretir. Görev yükü yönelim iletmediği için bu istisna orada oluşmaz ve pakette filtresiz alan kalmaz.
+**Yönelim.** Kuaterniyon her iki gövdede de bilinçli olarak filtresiz bırakılmıştır; bileşenler birim uzunluk kısıtıyla birbirine bağlı olduğundan, her bileşeni ayrı bir skaler filtreden geçirmek bu kısıtı bozar ve fiziksel olarak geçersiz bir yönelim üretir. Ayrıca BNO055 zaten ivmeölçer, jiroskop ve manyetometreyi birleştiren kendi füzyon çıkışını verdiğinden değer halihazırda bir kestirimdir. Görev yükü de kuaterniyon ilettiği için bu istisna orada da geçerlidir.
+
+**İki sistemin karşılaştırması.**
 
 | Büyüklük | Roket (UKB) | Görev Yükü (BGY) |
 |---|---|---|
-| Barometrik irtifa | Kalman | Kalman |
+| Barometrik irtifa | Kalman (doğrudan) | Filtreli basınçtan türetilir |
 | Basınç / sıcaklık / nem | — (bilimsel veri taşımaz) | Kalman (her biri ayrı parametre) |
 | İvme eksenleri | Kalman | Kalman (UKB ile aynı parametreler) |
 | Jiroskop eksenleri | Kalman | Kalman (UKB ile aynı parametreler) |
-| Yönelim (Euler / kuaterniyon) | Euler: Kalman · Kuaterniyon: ham (birim kısıtı) | — (yönelim iletilmez) |
+| Yönelim kuaterniyonu | Ham (birim kısıtı + BNO055 füzyonu) | Ham (birim kısıtı + BNO055 füzyonu) |
+| Euler açıları (roll/pitch/yaw) | **Ham** — yalnız SD kaydı (çevrimsel, filtrelenemez) | — (hesaplanmaz) |
+| Eğim açısı | Kuaterniyondan türetilir (SUT'ta Euler'den) | — (iletilmez) |
 | Dikey hız | Kalman'lı irtifadan türetilir, iletilir | Kalman'lı irtifadan türetilir, iletilmez |
-| GPS enlem / boylam | Ham | **Kalman** (ölçekli domen, fix başına) |
+| GPS enlem / boylam | **Ham** (kasıtlı) | **Ham** (kasıtlı) |
 
 Görev yükünde verinin hangi kollardan geçtiği aşağıdaki diyagramda özetlenmiştir:
 
 ```mermaid
 flowchart LR
-    BME["BME280<br/>basınç • sıcaklık<br/>nem • irtifa"] --> KF1{"Kalman<br/>4 ayrı filtre"}
+    BME["BME280<br/>basınç • sıcaklık • nem"] --> KF1{"Kalman<br/>3 ayrı filtre"}
+    KF1 -->|"filtreli basınç"| ALT["irtifa<br/>barometrik formül<br/>(2. filtre YOK)"]
+    ALT --> W
+    ALT --> SDX
     BNO["BNO055 IMU<br/>ivme X/Y/Z<br/>jiroskop X/Y/Z"] --> KF2{"Kalman<br/>6 ayrı filtre<br/>(UKB parametreleri)"}
-    GPS["GY-NEO-7M GPS<br/>enlem • boylam"] --> KF3{"Kalman<br/>ölçekli domen<br/>yalnız yeni fix'te"}
+    GPS["GY-NEO-7M GPS<br/>enlem • boylam"] --> RAW1["HAM<br/>alıcı zaten<br/>kendi çözümünü üretir"]
+    QUAT["BNO055 füzyon<br/>kuaterniyon"] --> RAW2["HAM<br/>birim uzunluk kısıtı"]
 
-    KF1 --> W["32 baytlık wire paket<br/>TAMAMI FİLTRELİ"]
+    KF1 --> W["32 baytlık wire paket"]
     KF2 -->|"bileşke ivme"| W
     KF2 -->|"jiroskop 3 eksen"| W
-    KF3 -->|"enlem • boylam"| W
+    RAW1 -->|"enlem • boylam"| W
+    RAW2 -->|"qx • qy • qz"| W
 
-    KF1 -->|"irtifa"| VZ["dikey hız<br/>Δirtifa / Δt"]
+    ALT -->|"irtifa"| VZ["dikey hız<br/>Δirtifa / Δt"]
     VZ -.->|"iletilmez"| LAND["İniş tespiti<br/>(beacon tetikler)"]
     KF2 -.->|"durgunluk eşiği"| LAND
 
-    SDX[("SD kart — kara kutu<br/>3 eksen ayrı ayrı<br/>tam çözünürlük (filtreli)")]
+    SDX[("SD kart — kara kutu<br/>3 eksen ayrı ayrı<br/>tam çözünürlük")]
     KF1 --> SDX
     KF2 --> SDX
+    RAW1 --> SDX
+    RAW2 --> SDX
 
     classDef kalman fill:#1f6feb22,stroke:#1f6feb,stroke-width:2px
-    class KF1,KF2,KF3 kalman
+    classDef ham fill:#d2992222,stroke:#d29922,stroke-width:2px
+    class KF1,KF2 kalman
+    class RAW1,RAW2 ham
 ```
 
 Roketin 23 baytlık telemetri paketinin alan dökümü ve filtreleme gerekçelerinin ayrıntısı için bkz. [Haberleşme Testi — Veri Paketi Yapısı](rapor-haberlesme-veri-paketi.md).

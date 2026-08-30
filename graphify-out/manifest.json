@@ -1,12 +1,12 @@
 {
   "Debug/gorevyuku_debug.cpp": {
-    "mtime": 1783613502.0466688,
-    "ast_hash": "f4a9e5aafd9988ba1c05743517645e4c",
+    "mtime": 1785415341.4937735,
+    "ast_hash": "97d13f69923379ea91458a34ee2bf555",
     "semantic_hash": ""
   },
   "Debug/main_debug.cpp": {
-    "mtime": 1784541092.518756,
-    "ast_hash": "424a6c0bc9b7d4fde476f1108c3dd711",
+    "mtime": 1785415667.1313338,
+    "ast_hash": "05743f91db6e1a2dc02228b943630c41",
     "semantic_hash": ""
   },
   "FunyeAtesleyici/funye_atesleyici.cpp": {
@@ -15,8 +15,8 @@
     "semantic_hash": ""
   },
   "GorevYukuYazilimi/gorevyuku.cpp": {
-    "mtime": 1785358683.8041902,
-    "ast_hash": "be2f421eec3a60b78874238aceb1913a",
+    "mtime": 1785414822.2175624,
+    "ast_hash": "4725f422aa0393b5b8879eead3c4b22d",
     "semantic_hash": ""
   },
   "I2C_Test/i2c_test.cpp": {
@@ -75,13 +75,13 @@
     "semantic_hash": ""
   },
   "src/main.cpp": {
-    "mtime": 1785358762.5088103,
-    "ast_hash": "82b84a0d2026c38d30591f7924124b92",
+    "mtime": 1785414683.0024858,
+    "ast_hash": "089eb7afa2b6e67d4eb743856b3e5489",
     "semantic_hash": ""
   },
   "test/test_ucus/test_main.cpp": {
-    "mtime": 1782913568.9516275,
-    "ast_hash": "94cd33636951f201d232d1b52bc7a7ff",
+    "mtime": 1785416173.3859003,
+    "ast_hash": "1cf83435a918cc4613a6271b2b48ecfa",
     "semantic_hash": ""
   },
   ".superpowers/sdd/progress.md": {
@@ -150,8 +150,8 @@
     "semantic_hash": ""
   },
   "README.md": {
-    "mtime": 1783603484.5145757,
-    "ast_hash": "410d86c5901bf6c44c2ace60cef15913",
+    "mtime": 1785364685.8279033,
+    "ast_hash": "bb2da75c0778a7b6fa61efeb77d199f3",
     "semantic_hash": ""
   },
   "docs/superpowers/plans/2026-07-07-sit-sut-main-entegrasyon.md": {
@@ -195,18 +195,23 @@
     "semantic_hash": ""
   },
   "docs/rapor-haberlesme-veri-paketi.md": {
-    "mtime": 1785175967.2543933,
-    "ast_hash": "1fe0a2f8160bcf6251fec6584a71c17e",
+    "mtime": 1785416239.7825363,
+    "ast_hash": "de8a6075652b8aabbff6def11483ac9e",
     "semantic_hash": ""
   },
   "docs/rapor-konum-belirleyici-mimari.md": {
-    "mtime": 1785360570.2601283,
-    "ast_hash": "4a8347d846d3f3f131199477897b2480",
+    "mtime": 1785416305.4869504,
+    "ast_hash": "f1e9f99c99032075b837b400d681c0cb",
     "semantic_hash": ""
   },
   "docs/superpowers/specs/2026-07-29-gorevyuku-hava-yogunlugu-ve-illustrasyon-design.md": {
     "mtime": 1785358514.2492075,
     "ast_hash": "45cc2194279169015dca4e3fc9a9a3d1",
+    "semantic_hash": ""
+  },
+  "docs/rapor-gorev-yuku-bilimsel-gorev-yazilim.md": {
+    "mtime": 1785416326.0719533,
+    "ast_hash": "050ba729c8e63afec0399b54fa125a26",
     "semantic_hash": ""
   }
 }

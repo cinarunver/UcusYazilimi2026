@@ -273,77 +273,150 @@ float referans_basinc = 1013.25;
 #define BME280_ADDR_SECONDARY 0x77
 
 // Uçuş Algoritması Sabitleri
-#define APOGEE_IRTIFA_FARKI   15.0  // m     - Max irtifadan bu kadar düşünce apogee sayılır (BME280)
+#define APOGEE_IRTIFA_FARKI   10.0  // m     - Max irtifadan bu kadar düşünce apogee sayılır (BME280)
+// 15.0 -> 10.0: bu esik dogrudan GECIKME demek. Durgunluktan serbest dususte
+// 15 m ~1.75 s, 10 m ~1.43 s surer (t = sqrt(2h/g)); yani tespit ~0.3 s one
+// alindi. Karsiliginda barometre gurultusune karsi pay daraldi — Kalman'li
+// irtifada birkaç metrelik salinim normaldir, 10 m hala onun uzerinde.
 #define AYRILMA2_MESAFE      550.0  // m     - Bu irtifanın altında ana paraşüt açılır
-#define MAX_EGLIM             10.0  // derece - Bu açıdan fazla eğimde apogee sayılmaz (güvenlik)
-// --- SUT'A OZEL EGIM KAPISI (YALNIZ MOD_SUT) ---
-// SUT'ta yonelim (roll/pitch) yer istasyonundan gelen SENTETIK bir degerdir ve
-// yorungeyle fiziksel olarak tutarli olmak zorunda degildir (kendi test
-// script'imiz sabit pitch=roll=0 gonderir). Tutarsiz veriye guvenlik kapisi
-// dayamak anlamsiz oldugundan SUT'ta kapi fiilen devre disi birakilir.
-// 180 derece = acos() ust siniri, yani kapi her zaman gecer.
+// --- APOGEE ARAMA TABANI ---
+// Apogee, 2. ayrilma noktasi gecilmeden ARANMAZ. Bilerek AYRILMA2_MESAFE'ye
+// esitlendi (ayri bir sayi degil), cunku ikisi mantiken bagli: `case INIS_1`
+// ana parasutu ancak `max_irtifa > AYRILMA2_MESAFE` iken acabiliyor. Bu tabanin
+// altinda apogee taninsaydi drogue acilir ama ana parasut hicbir zaman
+// acilamazdi — tutarsiz bir durum. Tek sabite baglayarak ikisi hep senkron.
 //
-// DIKKAT: Bu YALNIZCA MOD_SUT icindir. Gercek ucusta (MOD_BEKLEME) ve SIT'te
-// MAX_EGLIM aynen gecerlidir — asagidaki secim gercek ucus yolunu DEGISTIRMEZ.
-// SUT'un apogee'yi gecmesi, gercek ucusta da gececegi ANLAMINA GELMEZ.
-#define SUT_MAX_EGLIM        180.0  // derece - SUT'ta egim kapisi devre disi
-// --- SUT'A OZEL PLATO APOGEE DEDEKTORU (YALNIZ MOD_SUT) ---
-// Roketsan SUT anormal ucus senaryosunun tepesi DUZ bir platodur (~500 m,
-// 2.5s-5.2s): irtifa hic degismez. Ana algoritmanin apogee kapisi
-// (max_irtifa - irtifa > 15 m VE dikey_hiz < 0) platoda MATEMATIKSEL OLARAK
-// tetiklenemez — delta = 0, hiz = 0. Bu yuzden apogee ancak inis basladiktan
-// 15 m sonra, yani apogee penceresinin DISINDA yakalaniyordu.
-//
-// Cozum: SUT'ta ek bir kriter — "yukselis durdu" = apogee.
-//
-// DWELL NEDEN ZAMAN DEGIL, ORNEK SAYISI?
-// Sentetik veri TTL'den paket paket enjekte edilir (Task2, ~20 Hz). Paketler
-// arasinda `irtifa` DONUKTUR; Task1 ondan cok daha hizli doner. Duvar saati
-// (millis) dwell kullanilirsa seri hat 300 ms takildiginda (USB jitter, PC
-// tarafi sleep kaymasi, checksum'dan dusen frame) max_irtifa artmaz ve
-// YUKSELIS ORTASINDA SAHTE APOGEE uretilir. Bu gerceklesti.
-// Bu yuzden dwell, enjekte edilen ORNEK SAYISI ile olculur: veri akmazsa
-// sayac ilerlemez, dedektor jitter'dan tamamen bagimsizdir.
-//
-// TOLERANS NEDEN GEREKLI?
-// Ilk denemede dwell tek basina kullanildi ve NORMAL SUT senaryosunda apogee
-// KIL PAYI ERKEN atesledi: normal senaryonun tepesi sivridir, tepeden 6 ornek
-// sonra plato dedektoru doluyor, ana kriter (15 m dusus) ise biraz daha gec
-// yakaliyordu — yani dedektor asil kriteri onden kesiyordu.
-// Cozum: plato dedektoru YALNIZCA "hala tepedeyim, inmiyorum" iken gecerli.
-// Roket fiilen alcalmaya basladiginda (dusus > tolerans) bu kriter kendini
-// devre disi birakir ve apogee kararini ORIJINAL 15 m kapisi verir.
-//   - Anormal senaryo: plato tamamen duz, dusus = 0 -> tolerans hep saglanir.
-//   - Normal senaryo : tepeden sonra hemen alcalir -> tolerans bozulur, plato
-//                      dedektoru devreden cikar, davranis eskisiyle AYNI.
-//
-// 20 ornek @20 Hz ~= 1.0 s. Anormal senaryoda plato ~2.6 s (52 ornek) surdugu
-// icin apogee ~3.6 s'de duser — 2.5s-5.2s penceresinin rahatca icinde.
-//
-// DIKKAT: Bu kriter `sitSutMod == MOD_SUT` ile kapilidir. Gercek ucusta ve
-// SIT'te apogee YALNIZCA orijinal 15 m + negatif hiz kapisiyla tetiklenir —
-// GERCEK UCUS YOLU DEGISMEDI.
-#define SUT_APOGEE_PLATO_ORNEK      20   // adet - max_irtifa bu kadar ORNEK artmazsa apogee
-#define SUT_APOGEE_PLATO_TOLERANS  2.0   // m  - bundan fazla dustuyse plato DEGIL, inis
-#define SUT_APOGEE_MIN_IRTIFA    100.0   // m  - rampada/alcakta yanlis tetigi onler
+// NE ONLUYOR: `max_irtifa_degeri` 0.0'dan basliyor ve kalkista `irtifa`'ya
+// esitlenmiyor. `referans_basinc` setup()'ta bir kez olculdugu icin sonradan
+// basinc yukselirse (~8.3 m/hPa) veya kart padden yuksek bir yerde acilip
+// asagi tasinirsa `irtifa` NEGATIF okur. O zaman Kriter A rampada bile
+// saglanir: 0 - (-20) = 20 > 15. Hiz esigi de padde/kalkista (baro + Kalman
+// gecikmesi) 3 m/s altinda kalabildigi ve roket rampada dik durdugu icin
+// ucu birden tutar ve drogue RAMPADA acilirdi. Bu taban onu keser:
+// max_irtifa_degeri o anda ~0'dir, 550'yi gecemez.
+#define APOGEE_MIN_IRTIFA  AYRILMA2_MESAFE  // m - Bu irtifa asilmadan apogee aranmaz
 
-// --- SUT'A OZEL 2. AYRILMA IRTIFASI (YALNIZ MOD_SUT) ---
-// SUT senaryosunun sentetik yorungesi gercek ucus profiliyle ayni degildir;
-// 2. ayrilmanin test icinde tetiklendigini gormek icin esik ayri tutulur.
+// --- ANA PARASUT YEDEK TETIGININ TABANI (BULGU 1) ---
+// Yukaridaki "ikisi mantiken bagli" gerekcesi `case INIS_1` icin HALA
+// gecerlidir ve degismedi. Ama ana parasut YEDEK TETIGI de ayni sabite
+// baglanmisti; bunun MATLAB simulasyonunda olculen maliyeti su:
 //
-// ESKI DEGER 490.0 HATALIYDI: plato 500 m'de, apogee ise 500-15 = 485 m'de
-// tetikleniyordu. 490 > 485 oldugu icin ana parasut kapisi apogee'den SONRAKI
-// ILK dongude aciliyordu — iki funye arasi ~5 m = ~25 ms. Grafikte iki
-// ayrilmanin ust uste binmesinin sebebi buydu.
+//   Motor 1.4 s'de sonup apogee 476 m'de kalirsa
+//     (a) apogee arama tabani (550 m) drogue'u bloke eder  -> DOGRU
+//     (b) yedek tetik de ayni tabana bagli oldugu icin ana parasut da
+//         acilmaz                                          -> ISTENMEYEN
+//   Sonuc: 62 m/s ile yere carpma, IKI kurtarma yolu birden kayip.
 //
-// YENI DEGER: senaryonun inis hizi ~204 m/s (500 m -> 0, ~2.45 s). Ana parasut
-// penceresi 5.4s-5.6s, inis 5.2s'de 500 m'den basliyor:
-//   5.4s -> ~459 m , 5.5s -> ~439 m , 5.6s -> ~418 m
-// Pencerenin ortasi icin 440 m secildi (~5.49s).
-// DIKKAT: Gercek ucusta (MOD_BEKLEME) ve SIT'te AYRILMA2_MESAFE (550 m) aynen
-// gecerlidir — asagidaki secim GERCEK UCUS YOLUNU DEGISTIRMEZ.
-#define SUT_AYRILMA2_MESAFE  440.0  // m     - SUT'ta ana parasut acilma irtifasi
-#define MIN_DIKEY_HIZ          0.0  // m/s   - Bu değerin altı (negatif) = düşüyor (BME280)
+// Iki tabanin ayni sayi olmasi bir tasarim karari degil, tek sabite
+// baglamanin yan etkisiydi. Amaclari zit: arama tabani bir RAMPA KORUMASIDIR
+// ve yuksek kalmalidir; yedek tetik bir SON CAREDIR ve alcak olmalidir.
+//
+// NEDEN 200 m: bu irtifanin altinda ana parasut zaten sisemez, daha asagi
+// inmenin kazanci yok. Yukarisi guvenli: tetik ayrica `durum >= YUKSELIYOR`
+// ve max_irtifa_degeri'nin bu tabani GERCEKTEN gecmis olmasini sart kosar.
+// max_irtifa_degeri yalnizca YUKSELIYOR icinde ve gercek baro okumasindan
+// buyudugu icin rampada bu sart saglanamaz.
+#define YEDEK_TETIK_TABAN    200.0  // m - Yedek tetik bu irtifa asilmadan gecersiz
+
+// ============================================================================
+// [ TODO — EKLENECEK VE TEST EDILECEK ]
+// KRITER C — SERBEST DUSUS IVMESI (BNO055, barometreden BAGIMSIZ)
+// ============================================================================
+// DURUM: Sabitler tanimli ama apogee kosuluna BAGLI DEGIL. Once tezgah
+// olcumu (asagidaki prosedur), sonra VE terimi olarak baglanacak ve
+// test/test_ucus altina testleri yazilacak.
+//
+// YAPILACAKLAR:
+//   1) Tezgahta LINEARACCEL konvansiyonunu olc (prosedur asagida).
+//   2) SUT senaryosunun apogee civarinda enjekte ettigi ivmeye bak; gercek
+//      sensorle ayni konvansiyonda mi? Degilse SUT'ta gecip ucusta calismayan
+//      bir kriter yazilmis olur.
+//   3) Olculen degere gore APOGEE_SERBEST_IVME'yi guncelle.
+//   4) Kosula VE olarak ekle (VEYA DEGIL — sebebi asagida).
+//   5) Testleri yaz: bant ici/disi, motor yanarken, rampada.
+//
+// Amac: apogee tespitinin tek sensore bagimliligini kirmak. T, A ve B'nin ucu
+// de BME280'den turer (B zaten A'nin turevidir); barometre donarsa ucu birden
+// coker ve drogue HIC acilmaz. Bu kriter IMU'dan gelir, o yolu kapatir.
+//
+// FIZIK: BNO055 LINEARACCEL cikisi = ham ivmeolcer - kestirilen yercekimi.
+//   - Rampada dururken : ham = +g , yercekimi = +g  -> |lineer| ~ 0
+//   - Serbest dususte  : ham =  0 , yercekimi = +g  -> |lineer| ~ 9.81
+// Yani motorsuz ve surtunmesiz (apogee civari, hiz ~0 oldugu icin surukleme
+// de ~0) durumun imzasi |lineer ivme| ~ g'DIR, sifir DEGIL. Bu kodun eski
+// yorumundaki "apogee'de Z-ivmesi sifira yaklasir" varsayimi bu cikis icin
+// YANLISTIR; sifir okunan yer rampadir.
+//
+// !!! UCUSTAN ONCE TEZGAHTA DOGRULA !!!
+// Adafruit surumune gore konvansiyon degisebilir. Prosedur: karti eline al,
+// seri porttan sqrt(ivmeX^2+ivmeY^2+ivmeZ^2) degerini izle, sonra kisa
+// mesafede serbest birak (yastik uzerine).
+//   - Dususte ~9.81 okuyorsa   -> asagidaki degerler DOGRU, dokunma.
+//   - Dususte ~0 okuyorsa      -> APOGEE_SERBEST_IVME'yi 0.0 yap.
+// Ayrica SUT senaryosunun apogee civarinda hangi ivmeyi enjekte ettigine bak:
+// senaryo ile gercek sensor ayni konvansiyonda degilse, SUT'ta calisip ucusta
+// calismayan bir kriter yazmis oluruz — kacinmaya calistigimiz sey tam da bu.
+//
+// NEDEN "VE" OLARAK BAGLANACAK, "VEYA" OLARAK DEGIL:
+// Once VEYA olarak baglanmisti; geri alindi. Gerekce: VEYA terimi yalnizca
+// ERKEN atesleme uretebilir, asla engelleyemez. C'nin onundeki kapilar T, B
+// ve D idi — ama B (dikey hiz) barometreden gelir ve tam da C'nin kapatmak
+// istedigi senaryoda SAHTELESIR: baro YUKSELIS SIRASINDA donarsa irtifa sabit
+// kalir, turevi 0 olur ve B "yukselis bitti" der, oysa roket tirmaniyordur.
+// Geriye tek gercek kapi C kalir ve C o anda kesinlikle saglanir: motor
+// sonumunden sonra surukleme hiza bagli (∝ v²) surekli azalir, yani
+// |lineer ivme| burnout degerinden apogee'deki ~g'ye kesintisiz SUPURUR ve
+// aradaki her bandi gecmek zorundadir. Kabaca burnout'ta 3 g surukleme varsa,
+// hiz 200 -> 50 m/s'ye dustugunde surukleme ~0.19 g'ye iner ve deger bandin
+// icine girer. Sonuc: roket hala ~50 m/s ile YUKSELIRKEN drogue acilir —
+// parasut yirtilir, ayrica parca sacilma riski.
+// VE olarak baglandiginda bu yol yoktur: C yalnizca mevcut kosullari
+// DARALTIR, yeni bir atesleme yolu acmaz.
+#define APOGEE_SERBEST_IVME     9.81  // m/s² - serbest dususte beklenen |lineer ivme| (DOGRULANMADI)
+#define APOGEE_SERBEST_TOLERANS 2.5   // m/s² - bu bandin disi = motor veya surukleme var
+// Egim, apogee'nin KANITI degil, atesleme IZNIDIR: tepeyi A ve B tespit eder,
+// bu kapi yalnizca "su anki durusta acmak guvenli mi" der. Ayrica en zayif
+// kanit: apogee'de dikey hiz tanim geregi sifirdir, yani hiz vektoru tamamen
+// yataydir ve kararli roket akisa hizalanmak icin burnunu yatirir. Ustune
+// Kriter A 15 m dusus istedigi icin karar ani apogee'nin ~1.75 s SONRASIDIR
+// (t = sqrt(2*15/9.81)) — roketin yatmak icin bolca vakti olmustur.
+// Bu yuzden esik cok genis tutuldu. 90 derece "govde tam yatay" demektir;
+// 75 onun biraz altinda kalir, yani kapi YALNIZCA burun fiilen asagi donmeye
+// baslamis rokette devreye girer. Apogee'de normal sayilan buyuk pitch-over
+// (ruzgar, weathercocking, yatay hiz bileseni) artik engellenmiyor.
+// Kapinin arizasi tek yonlu ve olumcul oldugu icin — hicbir zaman atesleme
+// URETEMEZ, yalnizca ENGELLEYEBILIR — supheli durumda gevsek taraf tercih
+// edildi. Yonelim zaten en guvenilmez girdi: BNO055 fuzyonu, kalibrasyon
+// kaymasi, hizli donuste cayro doyumu ve montaj ekseni varsayimi (bkz.
+// Z-ekseni TODO'su) hepsi bu tek sayiyi bozabilir.
+// PLANLANAN: ikinci fiziksel onay olarak ivme kriteri (BNO055, barometreden
+// bagimsiz) eklenecek. O geldiginde apogee tespiti tek sensore dayanmaktan
+// cikar ve bu yonelim kapisi busbutun gereksizlesebilir.
+#define MAX_EGLIM             75.0  // derece - Bu açıdan fazla eğimde apogee sayılmaz (güvenlik)
+// --- SUT'A OZEL ESIK/KRITER YOKTUR ---
+// Ucus algoritmasi (apogee kapisi, egim kapisi, 2. ayrilma irtifasi) SUT'ta
+// gercek ucusla BIREBIR AYNI calisir. Eskiden SUT senaryosunun sentetik
+// yorungesini gecirmek icin uc mod-kosullu istisna vardi — egim kapisini
+// devre disi birakan SUT_MAX_EGLIM, apogee'ye ek OR-terimi ekleyen plato
+// dedektoru ve 2. ayrilmayi 440 m'ye ceken SUT_AYRILMA2_MESAFE. Ucu de
+// kaldirildi: SUT'un dogruladigi sey ancak ucacak algoritmanin TA KENDISI
+// ise anlamlidir. SUT'ta yalnizca VERI KAYNAGI degisir (TTL'den enjeksiyon),
+// karar mantigi degismez.
+// APOGEE HIZ ESIGI — "yukselis bitti" demek, "dusuyor" demek DEGIL.
+// Eskiden 0.0 idi, yani sart kati biçimde `hiz < 0` (kesin dusus). Apogee'de
+// gercek dikey hiz zaten sifira yakindir ve barometreden turev alinarak
+// hesaplandigi icin isareti gurultuye kalir — kati sifir esigi orada yazi-tura
+// atmak demekti. 3 m/s tolerans, "hiz fiilen bitti" ifadesinin karsiligidir.
+//
+// GEVSETME NEDEN GUVENLI: bu esik, `max_irtifa_degeri` tek bir basinc
+// sicramasiyla yanlis yuksege kilitlenirse (A kalici true olur) yukselis
+// boyunca ateslemeyi engelleyen son kapidir. Yukseliste dikey hiz 50-300 m/s
+// mertebesindedir; 3 m/s esigi bunu hala rahatca bloke eder. Koruma duruyor.
+//
+// NOT: A (irtifa farki) ve B (bu esik) AYNI sensorden turer — B, A'nin
+// turevidir. "Iki bagimsiz onay" degildir; gercek ikinci onay planlanan
+// ivme kriteriyle gelecek.
+#define MIN_DIKEY_HIZ          3.0  // m/s   - Dikey hız bunun altına indiyse yükseliş bitti (BME280)
 #define KALKIS_IVME_ESIGI     20.0  // m/s²  - Z ekseninde bu ivmenin üstü = kalkış (BNO055)
 #define INIS_HIZ_ESIGI         2.0  // m/s   - Bu değerin altı = yerde sayılır
 #define INIS_IRTIFA_ESIGI     20.0  // m     - Bu irtifanın altı = yerde sayılır
@@ -391,13 +464,6 @@ bool funye2_aktif = false;
 float onceki_irtifa = 0.0;
 unsigned long onceki_zaman = 0;
 float anlik_dikey_hiz = 0.0;
-// --- SUT PLATO APOGEE DEDEKTORU (YALNIZ MOD_SUT'ta okunur) ---
-// sut_veri_sayaci : Task2 her basarili 36B enjeksiyonda ARTIRIR (uretici).
-// sut_son_sayac   : Task1'in en son isledigi sayac degeri (tuketici).
-// sut_plato_ornek : max_irtifa'nin artmadigi ardisik ORNEK sayisi.
-volatile uint32_t sut_veri_sayaci = 0;
-uint32_t sut_son_sayac  = 0;
-uint16_t sut_plato_ornek = 0;
 float eglim_acisi = 0.0; // Roketin dikeyden sapma açısı (Tilt)
 
 // --- KALMAN FİLTRESİ SINIFI ---
@@ -434,9 +500,8 @@ SimpleKalmanFilter kf_ivmeZ(2.906, 9.982, 0.3884);
 SimpleKalmanFilter kf_gyroX(2.906, 9.982, 0.3884);
 SimpleKalmanFilter kf_gyroY(2.906, 9.982, 0.3884);
 SimpleKalmanFilter kf_gyroZ(2.906, 9.982, 0.3884);
-SimpleKalmanFilter kf_roll(2.906, 9.982, 0.3884);
-SimpleKalmanFilter kf_pitch(2.906, 9.982, 0.3884);
-SimpleKalmanFilter kf_yaw(2.906, 9.982, 0.3884);
+// Euler acilari (roll/pitch/yaw) icin Kalman YOKTUR — bkz. asagidaki
+// "EULER ACILARI FILTRELENMEZ" notu. Skaler filtre cevrimsel buyuklukte bozulur.
 
 // Sadece irtifa filtreleniyor (basinc/sicaklik/nem okunmuyor)
 SimpleKalmanFilter kf_irtifa(1.5, 1.5, 0.1); // (e_mea, e_est, q) — bkz. yukaridaki KALMAN IRTIFA AYARI notu
@@ -460,8 +525,11 @@ float qx = 0.0, qy = 0.0, qz = 0.0;
 float irtifa = 0.0; // basinc/bmeSicaklik/nem kullanilmadigi icin kaldirildi
 float basinc = 0.0; // Yalniz SİT modunda okunur (Tablo 3 SİT paketi icin)
 
-// GPS Verileri
-float gpsEnlem = 0.0, gpsBoylam = 0.0;
+// GPS Verileri — DOUBLE olmali, float YETMEZ.
+// float'in 24 bit mantisi 41 derece civarinda ~3.8e-6 derece (~42 cm) cozunurluk
+// verir; oysa wire formati x1e7 (WIRE_OLCEK_GPS) ile ~1.1 cm vaat eder. float ile
+// vaat edilen hassasiyetin ~40 kati kaybedilir. TinyGPS++ zaten double dondurur.
+double gpsEnlem = 0.0, gpsBoylam = 0.0;
 
 // --- TELEMETRİ YAPISI VE KUYRUK ---
 // "pragma pack(push, 1)" struct'ın bellekte boşluksuz (padding olmadan) paketlenmesini sağlar,
@@ -476,7 +544,7 @@ struct TelemetryPacket {
     float irtifa;
     float dikeyHiz; // Yeni eklenen dikey hız verisi
     float eglimAcisi; // Yeni eklenen eğim açısı
-    float gpsEnlem, gpsBoylam;
+    double gpsEnlem, gpsBoylam;  // float degil: bkz. GPS Verileri notu (~42 cm kaybi)
     bool ayrilma1_durum;
     bool ayrilma2_durum;
     uint8_t ucus_durumu; // Uçuş evresi: 0=Hazır, 1=Yükseliyor, 2=İniş1, 3=İniş2, 4=İndi
@@ -930,10 +998,6 @@ void Task1code(void *pvParameters) {
         kalkis_zaman      = 0;
         onceki_zaman      = 0;
         anlik_dikey_hiz   = 0.0;
-        // Plato dedektorunu sifirla; sayaci Task2'nin guncel degerine resenkronla
-        // (mod gecisinden onceki paketler plato olarak sayilmasin).
-        sut_plato_ornek = 0;
-        sut_son_sayac   = sut_veri_sayaci;
         funye1_aktif = false;
         funye2_aktif = false;
         funye_pin_serbest(PIN_FUNYE_1);
@@ -955,10 +1019,23 @@ void Task1code(void *pvParameters) {
         gyroY = kf_gyroY.updateEstimate(g.gyro.y);
         gyroZ = kf_gyroZ.updateEstimate(g.gyro.z);
 
+        /* ---------------------------------------------------------------
+           EULER ACILARI FILTRELENMEZ — HAM ALINIR.
+           yaw 0..360, pitch -180..+180 CEVRIMSEL (dairesel) buyukluklerdir.
+           Skaler Kalman bunlari duz skaler sanar: aci sinirdan atladiginda
+           (179.9 -> -179.9, fiziksel olarak 0.2 derecelik hareket) filtre
+           -359.8'lik dev bir "olcum" gorur ve kestirimini tum aralik boyunca
+           surukler — YOL USTUNDE 0 DERECEDEN GECER. Egim acisi eskiden
+           bunlardan turetildigi icin bu gecis "roket tam dik" diye okunup
+           FUNYE GUVENLIK KAPISINI YANLISLIKLA ACABILIRDI.
+           Ayrica BNO055 zaten kendi fuzyon cikisini verir; ustune ikinci
+           filtre yeni bilgi katmaz. Bu degerler artik YALNIZ SD kaydina ve
+           eski format pakete gider; egim acisi kuaterniyondan hesaplanir.
+           --------------------------------------------------------------- */
         bno.getEvent(&o, Adafruit_BNO055::VECTOR_EULER);
-        yaw   = kf_yaw.updateEstimate(o.orientation.x);
-        roll  = kf_roll.updateEstimate(o.orientation.y);
-        pitch = kf_pitch.updateEstimate(o.orientation.z);
+        yaw   = o.orientation.x;
+        roll  = o.orientation.y;
+        pitch = o.orientation.z;
 
         // Yonelim quaternion'u (3D telemetri icin — gimbal lock'suz). HAM gonderilir:
         // birbirine bagli quat bilesenlerini ayri skaler Kalman'lamak yanlistir.
@@ -990,16 +1067,38 @@ void Task1code(void *pvParameters) {
     // MOD_SUT: donanim atlandi; irtifa/basinc/ivme/aci degerleri Task2 tarafindan
     // TTL'den enjekte ediliyor.
 
-    // Roketin yere göre eğim açısını (Tilt Angle) hesapla (0 = Tam dik)
-    float p_rad = pitch * DEG_TO_RAD;
-    float r_rad = roll * DEG_TO_RAD;
-    // [FIX] Kalman gürültüsü cos(p)*cos(r)'yi 1.0'ı aşabilir → acos(NaN) → apogee asla tetiklenmez
-    float cos_val = cos(p_rad) * cos(r_rad);
+    /* Roketin dusey ile yaptigi egim acisi (Tilt, 0 = tam dik).
+       DONANIM MODUNDA KUATERNIYONDAN hesaplanir, Euler'den DEGIL: Euler
+       acilarindaki sarma (bkz. "EULER ACILARI FILTRELENMEZ") bu degeri
+       bozup funye guvenlik kapisini yanlislikla acabiliyordu. Kuaterniyon
+       cevrimsel degildir, sarmaz ve gimbal lock'a girmez.
+
+       Iki formul MATEMATIKSEL OLARAK AYNI buyuklugu verir — govde +Z ekseninin
+       dusey (dunya +Z) ile acisi:
+           cos(egim) = R[2][2] = cos(pitch)*cos(roll) = 1 - 2*(qx^2 + qy^2)
+       yani birim degisikligi degil, yalnizca daha saglam bir kaynaktan okuma.
+       q ile -q ayni donusu temsil ettiginden isaret normalizasyonu bu ifadeyi
+       etkilemez (qx^2 + qy^2 degismez). */
+    float cos_val;
+    if (sitSutMod == MOD_SUT) {
+        // SUT'ta gercek kuaterniyon yok (kimlik enjekte edilir); egim, yer
+        // istasyonunun gonderdigi sentetik roll/pitch'ten hesaplanmali.
+        cos_val = cos(pitch * DEG_TO_RAD) * cos(roll * DEG_TO_RAD);
+    } else {
+        cos_val = 1.0f - 2.0f * (qx * qx + qy * qy);
+    }
+    // Sayisal tasma acos'u tanimsiz yapabilir (NaN -> apogee asla tetiklenmez)
     cos_val = constrain(cos_val, -1.0f, 1.0f);
     eglim_acisi = acos(cos_val) * RAD_TO_DEG;
 
     // Anlık dikey hızı (Vz) hesapla
     anlik_dikey_hiz = hesapla_dikey_hiz(irtifa);
+
+    // Bileske (toplam) lineer ivme buyuklugu. Yonelimden BAGIMSIZ oldugu icin
+    // Kriter C burada tek eksen yerine buyuklugu kullanir — BNO055'in hangi
+    // ekseninin roketin uzun ekseni oldugu varsayimina (bkz. Z-ekseni TODO'su)
+    // bagli kalmaz. Ayni deger telemetri paketinde de kullanilir.
+    float ivme_buyuklugu = sqrtf(ivmeX * ivmeX + ivmeY * ivmeY + ivmeZ * ivmeZ);
 
     // --- FÜNYE ZAMANLAMA KONTROLÜ (Non-Blocking) ---
     funye_guncelle();
@@ -1010,9 +1109,38 @@ void Task1code(void *pvParameters) {
     // --- UÇUŞ ALGORİTMASI ---
     switch (durum) {
         case HAZIR:
-            // Kalkış tespiti: Z ekseninde yeterli ivme → YUKSELIYOR
-            // [ TODO ] BNO055 Z-ekseni yönü doğrulanmalı!
-            if (ivmeZ > KALKIS_IVME_ESIGI) {
+            // ================================================================
+            // KALKIS TESPITI — BILESKE IVME (yonelimden BAGIMSIZ)
+            // ================================================================
+            // Eskiden kosul `ivmeZ > KALKIS_IVME_ESIGI` idi ve hemen ustunde
+            // "[TODO] BNO055 Z-ekseni yonu dogrulanmali!" notu duruyordu.
+            // O TODO'nun bedeli MATLAB'de olculdu: tek eksen isareti TUM
+            // kurtarma zincirini dusuruyordu.
+            //
+            //   Z ekseni ters bagliysa ivmeZ hep negatif okunur
+            //     -> kalkis hic yakalanmaz, durum HAZIR'da kalir
+            //     -> max_irtifa_degeri yalnizca YUKSELIYOR icinde
+            //        guncellendigi icin 0'da kalir
+            //     -> ana parasut yedek tetigi de (durum >= YUKSELIYOR)
+            //        kilitli kalir.
+            //   Simulasyonda roket 3704 m'ye cikip geri indi, yazilim hala
+            //   "rampadayim" diyordu; iki parasut de acilmadi (208 m/s).
+            //
+            // Cozum: bileske buyukluk kullan. BNO055 LINEARACCEL yercekimini
+            // zaten cikarir, dolayisiyla rampada bileske ~0'dir; motor
+            // atesleyince eksen yonelimi ne olursa olsun esik asilir. Isaret
+            // hatasina, eksen permutasyonuna ve montaj acisina bagisik.
+            //
+            // NEDEN GUVENLI: yanlis bir kalkis tespiti tek basina bir sey
+            // ATESLEMEZ. YUKSELIYOR'a gecmek yalnizca apogee ARAMASINI acar;
+            // arama da APOGEE_MIN_IRTIFA (550 m) tabanina baglidir. Rampada
+            // sarsintiyla YUKSELIYOR'a gecilse bile o taban asilmadigi icin
+            // funye emri uretilmez.
+            //
+            // NOT: `ivme_buyuklugu` bu dongude zaten hesaplaniyor (Kriter C
+            // icin tanimlanmisti); ayni deger telemetri paketinde de kullanilir.
+            // ================================================================
+            if (ivme_buyuklugu > KALKIS_IVME_ESIGI) {
                 durum = YUKSELIYOR;
                 kalkis_zaman = millis(); // Motor yanma onlem suresi (durum biti 1) icin referans
             }
@@ -1022,76 +1150,56 @@ void Task1code(void *pvParameters) {
             // Max irtifa güncelle (sadece yükseliş fazında)
             if (irtifa > max_irtifa_degeri) {
                 max_irtifa_degeri = irtifa;
-                sut_plato_ornek   = 0;   // hala yukseliyor -> plato sayacini sifirla
-            } else {
-                // SUT: yalnizca YENI bir sentetik ornek geldiginde say. Paketler
-                // arasi Task1 donguleri sayilmaz — aksi halde dedektor Task1
-                // hizina ve seri hat jitter'ina bagli olurdu.
-                uint32_t sayac = sut_veri_sayaci;
-                if (sayac != sut_son_sayac) {
-                    sut_son_sayac = sayac;
-                    if (sut_plato_ornek < 0xFFFF) sut_plato_ornek++;
-                }
             }
 
             // ================================================================
-            // APOGEE TESPİTİ: 2 BAĞIMSIZ SENSÖR + GÜVENLİK KAPISI
+            // APOGEE TESPİTİ:  T && A && B && D
             // ================================================================
+            // Su an DORT terim de barometreden ya da yonelimden geliyor; ivme
+            // tabanli Kriter C HENUZ DEVREDE DEGIL (gerekcesi asagida).
             //
             // [SENSÖR 1 - BME280 Barometrik - 2 Koşul]
             //   Kriter A: İrtifa max değerden 15m düştü (yükselme durdu)
             //   Kriter B: Dikey hız negatif (irtifadan türev alınarak hesaplandı)
             //
-            // [SENSÖR 2 - BNO055 IMU - 1 Koşul]
-            //   Kriter C: Dikey doğrusal ivme 3 m/s² altına düştü.
-            //   Neden?→ Motor durmuş + sürtünme bitti = roket serbest düşüşe geçti.
-            //   Apogee'de Z-ivmesi sıfıra yaklaşır, sonra hafif negatiç olur.
-            //   Bu BME280'den tamamen bağımsız, ikinci bir fiziksel onay.
+            // [SENSÖR 2 - BNO055 IMU]  >>> KRITER C: EKLENECEK, HENUZ YOK <<<
+            //   Bkz. APOGEE_SERBEST_IVME tanimi — deger, tezgah dogrulama
+            //   prosedurü ve VEYA olarak baglamanin neden geri alindigi orada.
+            //   Ozet: konvansiyon olculmeden VE olarak baglanamaz (drogue hic
+            //   acilmayabilir), VEYA olarak da baglanmamali (baro yukseliste
+            //   donarsa erken atesleme uretir). Once olcum, sonra VE.
             //
             // [GÜVENLİK KAPISI - BNO055 - 1 Koşul]
-            //   Kriter D: Eğilm açısı < 10° (roket tümbling yapmıyor)
+            //   Kriter D: Eğim açısı < MAX_EGLIM (burun aşağı dönmemiş)
             //   Bu apogee algılaması değil, yanlış pozisyonda ateşlemeyi engeller.
-            //   SUT'ta bu kapi devre disidir (bkz. SUT_MAX_EGLIM) — sentetik
-            //   yonelim verisi guvenilir degil. GERCEK UCUS YOLU DEGISMEDI.
+            //   Bilerek COK genis tutuldu (75°) — gerekcesi MAX_EGLIM tanimininda.
+            //
+            // [ARAMA TABANI - BME280 - 1 Koşul]
+            //   Kriter T: max_irtifa, 2. ayrilma noktasini (APOGEE_MIN_IRTIFA)
+            //   gecmis olmali. Bu taban asilmadan apogee HIC aranmaz — rampada
+            //   ve alcak irtifada yanlis atesleme kapisi. Gerekcesi ve onledigi
+            //   somut senaryo APOGEE_MIN_IRTIFA tanimininda.
+            //
+            // Bu kapilar SUT'ta da AYNEN gecerlidir — mod-kosullu istisna yoktur.
             //
             // TÜM KOŞULLAR sağlanırsa Fünye1 ateşlenir.
             // ================================================================
-            {
-            const float egim_kapisi = (sitSutMod == MOD_SUT) ? SUT_MAX_EGLIM : MAX_EGLIM;
-
-            // [ANA KRITER] Gercek ucus + SIT + SUT: irtifa dustu ve hiz negatif.
-            const bool apogee_dusus = (max_irtifa_degeri - irtifa > APOGEE_IRTIFA_FARKI) && // A
-                                      (anlik_dikey_hiz < MIN_DIKEY_HIZ);                    // B
-
-            // [SUT-ONLY] Duz plato tepesi: max_irtifa N ms'dir artmiyor.
-            // Gercek ucusta ve SIT'te bu ifade DAIMA false — yol degismez.
-            // Ucuncu sart = "hala duz tepedeyim". Roket alcalmaya basladiysa bu
-            // kriter kendini devre disi birakir; karari orijinal 15 m kapisi verir.
-            const bool apogee_sut_plato =
-                (sitSutMod == MOD_SUT) &&
-                (max_irtifa_degeri > SUT_APOGEE_MIN_IRTIFA) &&
-                (max_irtifa_degeri - irtifa < SUT_APOGEE_PLATO_TOLERANS) &&
-                (sut_plato_ornek >= SUT_APOGEE_PLATO_ORNEK);
-
-            if ((apogee_dusus || apogee_sut_plato) &&
-                (eglim_acisi < egim_kapisi)) {                         // [BNO055] D - Güvenlik
+            if ((max_irtifa_degeri > APOGEE_MIN_IRTIFA) &&            // [BME280] T - Arama tabani
+                (max_irtifa_degeri - irtifa > APOGEE_IRTIFA_FARKI) && // [BME280] A
+                (anlik_dikey_hiz < MIN_DIKEY_HIZ) &&                  // [BME280] B
+                (eglim_acisi < MAX_EGLIM)) {                          // [BNO055] D - Güvenlik
                 Funye1Atesle(); // Drogue paraşüt → 1. Ayrılma
                 durum = INIS_1;
             }
-            }
             break;
 
-        case INIS_1: {
+        case INIS_1:
             // Alçak irtifaya inildiğinde ana paraşütü aç → 2. Ayrılma
-            // SUT'ta esik SUT_AYRILMA2_MESAFE'dir; gercek ucus 550 m'de kalir.
-            const float ayrilma2_kapisi =
-                (sitSutMod == MOD_SUT) ? SUT_AYRILMA2_MESAFE : AYRILMA2_MESAFE;
-            if ((irtifa < ayrilma2_kapisi) && (max_irtifa_degeri > ayrilma2_kapisi)) {
+            if ((irtifa < AYRILMA2_MESAFE) && (max_irtifa_degeri > AYRILMA2_MESAFE)) {
                 Funye2Atesle(); // Ana paraşüt
                 durum = INIS_2;
             }
             break;
-        }
 
         case INIS_2:
             // Yere iniş tespiti: hız sıfıra yakın + çok alçakta
@@ -1103,6 +1211,69 @@ void Task1code(void *pvParameters) {
         case INDI:
             // Sistem pasif, hiçbir aksiyon alınmaz
             break;
+    }
+
+    // ================================================================
+    // ANA PARAŞÜT YEDEK TETİĞİ — DURUM MAKİNESİNDEN BAĞIMSIZ
+    // ================================================================
+    // Sorun: ana parasut YALNIZ `case INIS_1` icinde acilir, oraya da yalnizca
+    // apogee yakalanirsa girilir. Yani TEK bir apogee kacirmasi IKI parasutu
+    // birden dusurur — roket burun asagi iner. Apogee tespiti barometreye
+    // (max_irtifa - irtifa > 15 m) bagli oldugundan, tepesi yayvan bir ucusta
+    // veya baro bozulmasinda bu gercekten olabilir.
+    //
+    // Cozum: ana parasut karari GOZLEME dayansin, duruma degil. Kosul zaten
+    // kendi kendini yukselise karsi korur: `irtifa` esigi yukari gecerken
+    // max_irtifa da onunla birlikte artar, dolayisiyla iki sart AYNI ANDA
+    // ancak esik BIR KEZ asilip sonra altina inildiginde saglanir.
+    // Bu bir zamanlayici DEGILDIR; hicbir sart millis()'e bakmaz.
+    //
+    // MANDAL `ayrilma2`, `funye2_aktif` DEGIL: funye2_aktif'i funye_guncelle()
+    // FUNYE_SURE_MS sonra temizler. Her dongude calisan bu blok o bayraga
+    // baksaydi 400 ms'de bir funyeyi yeniden enerjilendirirdi. `ayrilma2` ise
+    // bir kez set edilir, yalnizca mod gecisinde sifirlanir.
+    //
+    // SINIRI: drogue hic acilmadiysa roket bu irtifada cok hizlidir ve ana
+    // parasut acilista yirtilabilir. Yine de kurtarma sansi verir — hicbir sey
+    // yapmamaktan iyidir. Garanti degil, son care.
+    //
+    // BULGU 1 — TABAN ARTIK APOGEE_MIN_IRTIFA DEGIL, YEDEK_TETIK_TABAN.
+    // Eskiden burada `max_irtifa_degeri > AYRILMA2_MESAFE` yaziyordu; yani
+    // apogee 550 m'nin altinda kalan her ucusta bu son care de kilitliydi.
+    // Ikisi ayrildi: arama tabani yuksek kalir (rampa korumasi), yedek tetik
+    // asagi iner (kurtarma sansi). Gerekce YEDEK_TETIK_TABAN tanimininda.
+    //
+    // `irtifa < AYRILMA2_MESAFE` sarti DEGISMEDI: ana parasut irtifasi hala
+    // 550 m'dir. Degisen yalnizca "bu tetigin gecerli olmasi icin roket ne
+    // kadar yukselmis olmali" sorusunun cevabi.
+    //
+    // >>> ALCALMA TEYIDI — TABANI DUSURMENIN BEDELI <<<
+    // Yukaridaki "kosul kendi kendini yukselise karsi korur" gerekcesi
+    // `max_irtifa_degeri > X` ile `irtifa < X` AYNI esik oldugu icin
+    // gecerliydi: iki sart ancak esik bir kez asilip sonra altina
+    // inildiginde ayni anda saglanabiliyordu. Taban 550'den 200'e
+    // indirilince bu koruma KIRILDI — 200-550 m arasinda TIRMANIRKEN de iki
+    // sart ayni anda saglanir hale geldi ve geriye tek koruma olarak
+    // `anlik_dikey_hiz` kaldi.
+    //
+    // Bedeli simulasyonda olculdu: baro gurultusu buyudugunde (sigma 4 m)
+    // gurultulu turev anlik_dikey_hiz'i esigin altina dusuruyor ve ana
+    // parasut TIRMANIRKEN aciliyor — apogee 3704 m yerine 324 m.
+    //
+    // Cozum, kaybolan korumayi esikten BAGIMSIZ bicimde geri koymak: roketin
+    // gercekten alcaldigini teyit et. Tirmanista max_irtifa_degeri irtifayla
+    // birlikte arttigi icin fark sifira yakin kalir ve bu sart saglanamaz.
+    // Kriter A'nin ta kendisi; yedek tetik boylece (A && B && taban) olur —
+    // eksik olan tek sey egim kapisidir (D), ki bu tetigin varlik sebebi
+    // zaten D'nin bloke etmesidir.
+    if (!ayrilma2 &&
+        (durum >= YUKSELIYOR) &&
+        (max_irtifa_degeri > YEDEK_TETIK_TABAN) &&
+        (max_irtifa_degeri - irtifa > APOGEE_IRTIFA_FARKI) &&  // ALCALMA TEYIDI
+        (irtifa < AYRILMA2_MESAFE) &&
+        (anlik_dikey_hiz < MIN_DIKEY_HIZ)) {
+        Funye2Atesle();
+        durum = INIS_2;   // artik ana parasut altinda: inis tespiti devreye girsin
     }
 
     // --- SUT DURUM BİTLERİ (Tablo 5, latch) ---
@@ -1127,14 +1298,10 @@ void Task1code(void *pvParameters) {
     if (ayrilma1)                                      durum_bitleri |= ST_BIT_DROGUE_EMIR;
     // bit6: GOZLEM — belirlenen irtifanin altina indi. max_irtifa kapisi, rampada
     // (irtifa=0 < esik) bitin yanmasini onler; durum makinesine bagli DEGIL.
-    // Esik INIS_1'deki ateşleme kapisiyla AYNI olmali, yoksa SUT'ta funye
-    // ateslenirken bit6 yanmaz (veya tersi) ve yer istasyonu tutarsiz gorur.
-    {
-    const float ana_irtifa_kapisi =
-        (sitSutMod == MOD_SUT) ? SUT_AYRILMA2_MESAFE : AYRILMA2_MESAFE;
-    if ((max_irtifa_degeri > ana_irtifa_kapisi) &&
-        (irtifa < ana_irtifa_kapisi))                  durum_bitleri |= ST_BIT_ANA_IRTIFA;
-    }
+    // Esik INIS_1'deki ve yedek tetikteki ateşleme kapisiyla AYNI olmali, yoksa
+    // funye ateslenirken bit6 yanmaz (veya tersi) ve yer istasyonu tutarsiz gorur.
+    if ((max_irtifa_degeri > AYRILMA2_MESAFE) &&
+        (irtifa < AYRILMA2_MESAFE))                    durum_bitleri |= ST_BIT_ANA_IRTIFA;
     if (ayrilma2)                                      durum_bitleri |= ST_BIT_ANA_EMIR;
 
     // --- MAKSİMUM HIZLI TTL GÖNDERİM (SIT/SUT) ---
@@ -1154,7 +1321,7 @@ void Task1code(void *pvParameters) {
     TelemetryPacket packet;
     packet.ivmeX = ivmeX; packet.ivmeY = ivmeY; packet.ivmeZ = ivmeZ;
     // Bileske (toplam) ivme buyuklugu — core0'da hesaplanir, havadan tek slot ile gider.
-    packet.ivmeToplam = sqrtf(ivmeX * ivmeX + ivmeY * ivmeY + ivmeZ * ivmeZ);
+    packet.ivmeToplam = ivme_buyuklugu;  // dongu basinda bir kez hesaplandi (Kriter C ile ayni deger)
     packet.gyroX = gyroX; packet.gyroY = gyroY; packet.gyroZ = gyroZ;
     packet.roll = roll; packet.pitch = pitch; packet.yaw = yaw;  // SD log icin
     packet.qx = qx; packet.qy = qy; packet.qz = qz;              // havadan giden yonelim
@@ -1274,10 +1441,6 @@ void Task2code(void *pvParameters) {
                           // SUT'ta 3D quaternion telemetrisi kullanilmaz -> kimlik (identity)
                           // gonderilir. eglim_acisi yine enjekte roll/pitch'ten hesaplanir.
                           qx = qy = qz = 0.0f;
-                          // Plato apogee dedektorunun ornek saati (bkz.
-                          // SUT_APOGEE_PLATO_ORNEK). EN SON artirilir ki Task1
-                          // sayaci gordugunde irtifa zaten yazilmis olsun.
-                          sut_veri_sayaci++;
                       }
                   }
               }

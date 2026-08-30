@@ -180,11 +180,12 @@ Mevcut yük (`ORANI = 10`), Core 0 döngü hızına doğrudan bağlıdır:
 
 ### 4.1 Sensör füzyonu ve 1D Kalman filtreleri
 
-Donanımsal gürültüyü (özellikle motor titreşiminin barometreye etkisi) bastırmak için her ölçüm ekseni ayrı bir 1 boyutlu `SimpleKalmanFilter` nesnesinden geçer. Ana uçuş yazılımında **10 filtre** çalışır:
+Donanımsal gürültüyü (özellikle motor titreşiminin barometreye etkisi) bastırmak için her ölçüm ekseni ayrı bir 1 boyutlu `SimpleKalmanFilter` nesnesinden geçer. Ana uçuş yazılımında **7 filtre** çalışır:
 
 | Grup | Filtre | Parametre (`e_mea`, `e_est`, `q`) | Not |
 | :--- | :---: | :--- | :--- |
-| BNO055 ivme ×3, gyro ×3, Euler ×3 | 9 | `2.906, 9.982, 0.3884` | Ölçülen IMU gürültüsüne göre ayarlandı |
+| BNO055 ivme ×3, gyro ×3 | 6 | `2.906, 9.982, 0.3884` | Ölçülen IMU gürültüsüne göre ayarlandı |
+| BNO055 Euler ×3 | **0** | — | Euler için Kalman **yok**; eğim kuaterniyondan hesaplanır |
 | BME280 irtifa | 1 | `1.5, 1.5, 0.1` | Apogee kararını besler |
 | **BNO055 kuaterniyon** | **0** | — | **Bilinçli filtresiz** (aşağıya bakınız) |
 
@@ -217,8 +218,8 @@ Durum makinesi 5 fazdan oluşur: `HAZIR → YUKSELIYOR → INIS_1 → INIS_2 →
 ```mermaid
 stateDiagram-v2
     [*] --> HAZIR
-    HAZIR --> YUKSELIYOR : ivmeZ > kalkış eşiği
-    YUKSELIYOR --> INIS_1 : ÜÇLÜ ÇAPRAZ ONAY<br/>irtifa < maks−15 m<br/>VE Vz < 0<br/>VE Tilt < 10°
+    HAZIR --> YUKSELIYOR : bileşke ivme > kalkış eşiği
+    YUKSELIYOR --> INIS_1 : T VE A VE B VE D<br/>maks > 550 m<br/>VE irtifa < maks−10 m<br/>VE Vz < +3 m/s<br/>VE Tilt < 75°
     INIS_1 --> INIS_2 : irtifa < 550 m<br/>VE maks > 550 m
     INIS_2 --> INDI : \|Vz\| < 2 m/s<br/>VE irtifa < 20 m
     INIS_1 : Drogue ayrıldı (Fünye 1)
@@ -226,26 +227,36 @@ stateDiagram-v2
     INDI : Tampon diske zorla boşaltılır
 ```
 
-`YUKSELIYOR → INIS_1` (drogue ayrılma) geçişi **üçlü çapraz onaya** bağlıdır:
+`YUKSELIYOR → INIS_1` (drogue ayrılma) geçişi **dört koşulun tamamına** bağlıdır — `T && A && B && D`:
 
-1. **Bağıl irtifa:** `Güncel İrtifa < (Maks İrtifa − 15 m)`
-2. **Kinetik:** `Vz < 0` — hız yön değiştirdi
-3. **Güvenlik (tumbling):** `Tilt < 10°`
+| | Koşul | Kaynak | Rol |
+| :-: | :--- | :--- | :--- |
+| **T** | `Maks İrtifa > 550 m` | BME280 | **Arama tabanı** — bu aşılmadan apogee hiç aranmaz |
+| **A** | `İrtifa < (Maks İrtifa − 10 m)` | BME280 | Bağıl irtifa düşüşü |
+| **B** | `Vz < +3 m/s` | BME280 | Yükseliş bitti |
+| **D** | `Tilt < 75°` | BNO055 | **Güvenlik kapısı** — apogee algılaması değil, yanlış pozisyonda ateşleme engeli |
 
-> **Üçüncü onay neden var?** Roket motor arızasıyla yatay uçuşa geçerse veya takla atarsa, statik deliklerdeki dinamik basınç barometreyi yanıltıp "sahte irtifa düşüşü" gösterebilir. İlk iki koşul bu senaryoda da sağlanır. `Tilt < 10°` şartı, roket yatay veya takla halindeyken fünye ateşlemesini **kesin engeller.**
+> **Güvenlik kapısı (D) neden var?** Roket motor arızasıyla yatay uçuşa geçerse veya takla atarsa, statik deliklerdeki dinamik basınç barometreyi yanıltıp "sahte irtifa düşüşü" gösterebilir. A ve B bu senaryoda da sağlanır. Eğim şartı, roket yatay veya takla halindeyken fünye ateşlemesini keser.
+>
+> Eşik bilerek **geniş** (75°) tutuldu: dar bir kapı normal uçuşta drogue'u kaçırma riski taşır. Simülasyon bu kapının bağlayıcı kısıt olduğunu gösteriyor — bkz. `MatlabSim/BULGULAR.md` Bulgu 3 ve 7.
+
+> **Kriter C (serbest düşüş imzası) tanımlı ama devrede değil.** Konvansiyon ölçülmeden VE olarak bağlanamaz (drogue hiç açılmayabilir), VEYA olarak da bağlanmamalı (baro yükselişte donarsa erken ateşleme üretir). Önce tezgahta ölçüm, sonra VE.
 
 **Eşik özeti:**
 
 | Sabit | Değer | Rol |
 | :--- | :---: | :--- |
-| `KALKIS_IVME_ESIGI` | 20 m/s² | `HAZIR → YUKSELIYOR` geçişi |
-| `APOGEE_IRTIFA_FARKI` | 15 m | Apogee bağıl irtifa onayı |
-| `MAX_EGLIM` | 10° | Apogee güvenlik (tumbling) onayı |
+| `KALKIS_IVME_ESIGI` | 20 m/s² | `HAZIR → YUKSELIYOR` geçişi — **bileşke** ivme üzerinden (eksen işaretinden bağımsız) |
+| `APOGEE_IRTIFA_FARKI` | 10 m | Apogee bağıl irtifa onayı (Kriter A) |
+| `APOGEE_SERBEST_IVME` ± `TOLERANS` | 9.81 ± 2.5 m/s² | Serbest düşüş imzası (Kriter C, IMU) — **tanımlı ama devrede değil**; tezgahta ölçülüp VE terimi olarak bağlanacak |
+| `APOGEE_MIN_IRTIFA` | = `AYRILMA2_MESAFE` (550 m) | Bu irtifa aşılmadan apogee aranmaz (rampa koruması) |
+| `YEDEK_TETIK_TABAN` | 200 m | Ana paraşüt **yedek tetiğinin** tabanı — arama tabanından ayrı; düşük apogee'li uçuşta kurtarma sağlar |
+| `MAX_EGLIM` | 75° | Apogee ateşleme izni (yalnızca burun fiilen aşağı dönmüşse engeller) |
 | `AYRILMA2_MESAFE` | 550 m | Ana paraşüt açılma irtifası |
 | `INIS_HIZ_ESIGI` / `INIS_IRTIFA_ESIGI` | 2 m/s / 20 m | İniş tespiti |
 | `FUNYE_SURE_MS` | 400 ms | Fünye enerjilenme süresi |
 
-> SUT modunda eğim kapısı `SUT_MAX_EGLIM = 180°` ile devre dışı bırakılır (tezgahta roket dik tutulamaz). Bu **mod-koşullu** bir istisnadır; gerçek uçuş yolunda (`MOD_BEKLEME`) kapı 10°'de kalır.
+> Bu eşiklerin **hiçbirinin SUT'a özel istisnası yoktur**. SİT/SUT'ta yalnızca veri kaynağı değişir (sensör yerine TTL'den enjeksiyon); apogee kriteri, eğim güvenlik kapısı ve 2. ayrılma irtifası uçacak yazılımla birebir aynı çalışır.
 
 ### 4.4 LED durum göstergesi
 

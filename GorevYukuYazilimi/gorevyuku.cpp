@@ -177,12 +177,35 @@ class SimpleKalmanFilter {
     bool  first_run;
 };
 
-// BME280 icin Kalman filtreleri
-// NOT: irtifa apogee icin kullanilmadigindan hafif tutuldu (main'deki agir 16.3 DEGIL).
-SimpleKalmanFilter kf_basinc(2.0, 2.0, 0.1);
+/* BME280 icin Kalman filtreleri
+   ------------------------------------------------------------------------
+   IRTIFA ICIN AYRI FILTRE YOKTUR (kf_irtifa kaldirildi). Gerekcesi:
+   basinc ve irtifa AYNI fiziksel buyuklugun iki gorunumudur — readAltitude()
+   iceride basinci yeniden ham okuyup barometrik formulu uygular. Ikisini
+   birbirinden bagimsiz iki filtreden gecirmek, farkli zaman sabitleriyle
+   yumusatilmis ve BIRBIRIYLE TUTARSIZ iki alan uretiyordu: yerde `basinc`
+   alanindan `irtifa` alanini geri turetmek mumkun degildi. Artik basinc
+   filtrelenir, irtifa DOGRUDAN filtrelenmis basinctan turetilir; tutarlilik
+   insaat geregi saglanir ve turetilmis degere ikinci filtre binmez.
+
+   kf_basinc AYARI — (2.0, 2.0, 0.1) DEGERI HATALIYDI, degistirildi.
+   Bu filtrede K = err_est/(err_est + e_mea); err_est her adimda (1-K) ile
+   kuculup yalnizca q*|degisim| kadar geri beslenir. e_mea gercek sensor
+   gurultusunden cok buyukse err_est cokup K -> 0 olur ve FILTRE DONAR.
+   BME280'in basinc gurultusu ~0.02 hPa mertebesinde; 2.0 hPa bunun ~100
+   kati idi — main.cpp'de irtifa icin bulunup geri alinan hatanin (commit
+   128a757, e_mea 1.5 -> 16.3) aynisi.
+
+   Yeni degerler tahmin degil: main.cpp'de SAHADA DOGRULANMIS irtifa filtresi
+   (1.5, 1.5, 0.1) basinc domenine cevrildi. Deniz seviyesinde duyarlilik
+   |dh/dP| ~ 8.43 m/hPa oldugundan:
+       e_mea = 1.5 m / 8.43 = 0.178 hPa      q = 0.1 / 8.43 = 0.0119 hPa
+   Boylece turetilen irtifa, dogrulanmis filtrenin dinamigini korur.
+   (Barometrik donusum dogrusal olmadigindan duyarlilik irtifa ile ~%10
+   degisir; 0-1000 m bandinda ihmal edilebilir.)                            */
+SimpleKalmanFilter kf_basinc(0.178, 0.178, 0.0119);
 SimpleKalmanFilter kf_sicaklik(0.5, 0.5, 0.01);
 SimpleKalmanFilter kf_nem(1.0, 1.0, 0.1);
-SimpleKalmanFilter kf_irtifa(1.5, 1.5, 0.1);
 
 // IMU (BNO055) icin Kalman filtreleri — parametreler main.cpp (UKB) ile birebir.
 // Havadan giden bileske ivme bu FILTRELENMIS eksenlerden hesaplanir.
@@ -193,19 +216,19 @@ SimpleKalmanFilter kf_gyroX(2.906, 9.982, 0.3884);
 SimpleKalmanFilter kf_gyroY(2.906, 9.982, 0.3884);
 SimpleKalmanFilter kf_gyroZ(2.906, 9.982, 0.3884);
 
-// --- GPS icin Kalman (OLCEKLI DOMEN — dogrudan dereceye uygulanamaz) ---
-// GPS derecesi cok kucuk adimlarla degisir (1e-5 derece ~ 1.1 m). Filtre dogrudan
-// dereceye uygulanirsa |last_estimate - current| terimi ~1e-6 kalir, err_estimate
-// sifira coker, kalman_gain 0'a gider ve filtre ILK FIX'TE DONAR — konumu bir daha
-// takip etmez. Bu yuzden ilk fix referans alinir ve referansa gore x1e5 olceklenmis
-// (~metre mertebesi) domende filtrelenir; cikis tekrar dereceye cevrilir.
-// Ayrica filtre YALNIZ yeni fix geldiginde guncellenir (100 Hz'te ayni degeri tekrar
-// tekrar beslemek de err_estimate'i sifira cokertirdi).
-#define GPS_KALMAN_OLCEK 1e5
-SimpleKalmanFilter kf_gpsEnlem(3.0, 3.0, 0.3);   // ~3 m olcum belirsizligi
-SimpleKalmanFilter kf_gpsBoylam(3.0, 3.0, 0.3);
-double gps_ref_enlem = 0.0, gps_ref_boylam = 0.0;
-bool   gps_ref_set   = false;
+// --- GPS: KASITLI OLARAK FILTRELENMEZ (ham fix pakete yazilir) ---
+// Enlem/boylam uzerinde skaler Kalman KULLANILMAZ. Gerekcesi:
+//   1) NEO-7M zaten kendi navigasyon cozumunu (dahili Kalman) uretir; cikisi ham
+//      pseudorange degil, filtrelenmis bir fix'tir. Ustune ikinci filtre yeni bilgi
+//      katmaz, yalniz gecikme bindirir.
+//   2) Buradaki SimpleKalmanFilter TEK DURUMLUDUR (yalniz pozisyon). Gercek bir konum
+//      filtresinin state'i en az [pozisyon, hiz] olmali ki tahmin adimi pos += vel*dt
+//      yapabilsin. Hiz durumu yokken filtre hareketi "gurultu" sanar ve HIZA ORANTILI
+//      gecikme uretir — inis sirasinda konum izi gercek konumun gerisinde kalir.
+//   3) Enlem ve boylami birbirinden bagimsiz iki skaler filtreden gecirmek kovaryansi
+//      ihmal eder; bu matematiksel olarak Kalman degil, adaptif bir alcak geciren filtredir.
+// Kurtarma amacli konum verisinde yumusatma yerine gercek olcumun korunmasi tercih
+// edilir. Ayni gerekceyle UKB (main.cpp) tarafinda da GPS ham gonderilir.
 
 // --- Sensor nesneleri ---
 Adafruit_BME280 bme;
@@ -215,7 +238,10 @@ bool bnoOk = false;   // BNO bulundu mu? (yoksa inis tespiti yalniz baro ile)
 
 // --- Sensor veri degiskenleri ---
 float basinc = 0, sicaklik = 0, nem = 0, irtifa = 0;
-float gpsEnlem = 0, gpsBoylam = 0;
+// GPS — DOUBLE olmali, float YETMEZ. float'in 24 bit mantisi 41 derece civarinda
+// ~3.8e-6 derece (~42 cm) cozunurluk verir; wire formati ise x1e7 (WIRE_OLCEK_GPS)
+// ile ~1.1 cm vaat eder. TinyGPS++ zaten double dondurur.
+double gpsEnlem = 0, gpsBoylam = 0;
 
 // --- INIS TESPITI DURUMU (yalniz lokal; pakete girmez) ---
 float max_irtifa = 0.0;
@@ -237,7 +263,7 @@ struct GorevYukuPaket {
     float basinc, sicaklik, nem, irtifa;   // BME280 (basinc hPa)
     float es, pv;                          // Tetens ara degerleri (hPa) — YALNIZ SD, havadan gitmez
     float yogunluk;                        // nemli hava yogunlugu (kg/m^3)
-    float gpsEnlem, gpsBoylam;             // GPS
+    double gpsEnlem, gpsBoylam;            // GPS — float degil (bkz. GPS notu, ~42 cm kaybi)
     float ivmeX, ivmeY, ivmeZ;             // BNO055 lineer ivme (m/s^2)
     float ivmeToplam;                      // bileske ivme = sqrt(x^2+y^2+z^2) (core0'da hesaplanir)
     float qx, qy, qz;                      // BNO055 yonelim quaternion (w>=0 normalize)
@@ -258,7 +284,9 @@ struct GorevYukuPaket {
 //      pakette oldugundan yerde birebir turetilebilirler.
 // NOT: yonelim Euler yerine quaternion gider (gimbal lock yok); w yer istasyonunda
 //      w=sqrt(1-x^2-y^2-z^2) ile geri hesaplanir (firmware w>=0 garanti eder).
-// NOT: pakete giren TUM alanlar Kalman'dan gecer (BME280 + IMU + GPS).
+// NOT: pakete giren alanlarin cogu Kalman'dan gecer (BME280 + IMU), ANCAK
+//      GPS enlem/boylam ve yonelim quaternion'u KASITLI OLARAK HAM gider —
+//      gerekce icin yukaridaki "GPS: KASITLI OLARAK FILTRELENMEZ" notuna bak.
 #pragma pack(push, 1)
 struct GorevYukuWire {
     uint16_t basinc;
@@ -566,7 +594,10 @@ void Task1code(void *pvParameters) {
     sicaklik = kf_sicaklik.updateEstimate(bme.readTemperature());
     basinc   = kf_basinc.updateEstimate(bme.readPressure() / 100.0f); // Pa -> hPa
     nem      = kf_nem.updateEstimate(bme.readHumidity());
-    irtifa   = kf_irtifa.updateEstimate(bme.readAltitude(referans_basinc));
+    // Irtifa AYRI okunmaz/filtrelenmez: FILTRELENMIS basinctan turetilir; boylece
+    // `basinc` ve `irtifa` alanlari birbiriyle tutarli kalir (bkz. kf_basinc notu).
+    // Adafruit_BME280::readAltitude ile ayni barometrik formul.
+    irtifa   = 44330.0f * (1.0f - powf(basinc / referans_basinc, 0.1903f));
 
     // 1.5 NEMLI HAVA YOGUNLUGU — Kalman'dan gecmis basinc/sicaklik/nem uclusunden.
     // Ikinci bir Kalman UYGULANMAZ: girdilerin ucu de zaten filtreli, turev degere
@@ -574,23 +605,11 @@ void Task1code(void *pvParameters) {
     float es_hpa = 0, pv_hpa = 0;
     float yogunluk = hesapla_hava_yogunlugu(basinc, sicaklik, nem, &es_hpa, &pv_hpa);
 
-    // 2. GPS — filtre YALNIZ yeni fix geldiginde islenir (bkz. GPS Kalman notu)
+    // 2. GPS — HAM fix dogrudan yazilir, filtrelenmez (bkz. yukaridaki GPS notu)
     while (Serial2.available() > 0) gps.encode(Serial2.read());
     if (gps.location.isUpdated()) {
-        double ham_enlem  = gps.location.lat();
-        double ham_boylam = gps.location.lng();
-        if (!gps_ref_set) {                       // ilk fix -> referans noktasi
-            gps_ref_enlem  = ham_enlem;
-            gps_ref_boylam = ham_boylam;
-            gps_ref_set    = true;
-        }
-        // Referansa gore olcekli (~metre) domende filtrele, sonra dereceye don
-        float d_enlem  = kf_gpsEnlem.updateEstimate(
-                             (float)((ham_enlem  - gps_ref_enlem)  * GPS_KALMAN_OLCEK));
-        float d_boylam = kf_gpsBoylam.updateEstimate(
-                             (float)((ham_boylam - gps_ref_boylam) * GPS_KALMAN_OLCEK));
-        gpsEnlem  = (float)(gps_ref_enlem  + d_enlem  / GPS_KALMAN_OLCEK);
-        gpsBoylam = (float)(gps_ref_boylam + d_boylam / GPS_KALMAN_OLCEK);
+        gpsEnlem  = gps.location.lat();   // double — daraltma yok
+        gpsBoylam = gps.location.lng();
     }
 
     // 2.5 BNO055 (IMU) — inis tespiti icin okunur ve ARTIK pakete de basilir.

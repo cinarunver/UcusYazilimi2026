@@ -124,6 +124,15 @@ function s = sim_ucus(p, ayar, ariza)
     s.apogee_gecikme= drogue_t - s.apogee_t;
     s.inis_hizi     = abs(s.vz(end));
     s.suruklenme    = abs(s.x(end));
+
+    % Parasut ACILIS HIZLARI. Bunlar ozet buyuklukler arasinda olmak
+    % ZORUNDA: model, parasutun her acildiginda saglam kaldigini varsayar.
+    % Drogue kacip ana parasut balistik hizda acildiginda simulasyon yine
+    % "yumusak indi" der — gercek donanim demez. Sok yuku ~v^2 ile buyudugu
+    % icin 190 m/s'lik bir acilis tasarim yukunun ~150 katidir. Bu alan
+    % olmadan basari_orani yaniltici cikiyordu (bkz. Bulgu 7).
+    s.drogue_hiz    = hiz_aninda(s, drogue_t);
+    s.ana_hiz       = hiz_aninda(s, ana_t);
     s.ayar          = ayar;
 end
 
@@ -132,6 +141,13 @@ function z = kesit(s, tt)
 %KESIT  Verilen andaki gercek irtifa (emir yoksa NaN).
     if isnan(tt), z = NaN; return; end
     [~, j] = min(abs(s.t - tt));  z = s.z(j);
+end
+
+% =====================================================================
+function v = hiz_aninda(s, tt)
+%HIZ_ANINDA  Verilen andaki gercek toplam hiz (emir yoksa NaN).
+    if isnan(tt), v = NaN; return; end
+    [~, j] = min(abs(s.t - tt));  v = s.hiz(j);
 end
 
 % =====================================================================
@@ -190,10 +206,20 @@ function [o, g] = sensor_oku(y, t, p, drogue_t, ana_t, ariza, son_olcum)
         o.ivme(1) = ax*cos(e) - az*sin(e);
         o.ivme(3) = ax*sin(e) + az*cos(e);
     end
+    % IMU Z ekseni ters: kalkis ivmesi NEGATIF gorunur. Kalkis tespiti
+    % (ivme[2] > esik) hic tetiklenmez. Eksen hatasindan farki, bunun bir
+    % ACI hatasi degil ISARET hatasi olmasidir: 180 derecelik bir montaj/
+    % yapilandirma hatasi, "biraz egik" degil.
+    if ariza.imu_z_ters
+        o.ivme(3) = -o.ivme(3);
+    end
     % Barometre donmasi: son gecerli degeri tekrarlar (I2C kopmasi / tikanma)
     if ~isnan(ariza.baro_don_t) && t >= ariza.baro_don_t && ~isempty(son_olcum)
         o.irtifa = son_olcum.irtifa;
     end
+    % Referans basinc bayatlamasi: TUM ucus boyunca sabit irtifa yanlisligi.
+    % Donma gibi bir kopma degil, sessiz bir kayma — telemetride fark edilmez.
+    o.irtifa = o.irtifa + ariza.baro_ofset;
     % Not: 1 - 2*(qx^2+qy^2) = cos(th) -> algoritmanin egim formulu dogru
     % aciyi verir. Gercek ucus yolu bu (kuaterniyon), Euler DEGIL.
 end

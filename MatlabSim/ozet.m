@@ -19,6 +19,8 @@ function ozet(s, ad)
     else
         fprintf('  Ana parasut emri     : %7.1f m   (hedef 550 m, hata %+.1f m)\n', ...
                 s.ana_z, s.ana_z - 550);
+        fprintf('  Ana acilis hizi      : %7.1f m/s%s\n', s.ana_hiz, ...
+                repmat('   <<< BALISTIK ACILIS', 1, s.ana_hiz > 30));
     end
 
     fprintf('  Inis hizi            : %7.1f m/s\n', s.inis_hizi);
@@ -29,6 +31,11 @@ function ozet(s, ad)
     if isnan(s.drogue_t), ihlal{end+1} = 'drogue acilmadi'; end
     if isnan(s.ana_t),    ihlal{end+1} = 'ana parasut acilmadi'; end
     if s.inis_hizi > 10,  ihlal{end+1} = sprintf('inis hizi %.1f > 10 m/s', s.inis_hizi); end
+    % Ana parasut balistik hizda acildiysa model "indi" der ama gercek
+    % donanim yirtilir (bkz. Bulgu 7).
+    if ~isnan(s.ana_hiz) && s.ana_hiz > 30
+        ihlal{end+1} = sprintf('ana parasut %.0f m/s''de acildi (limit 30)', s.ana_hiz);
+    end
     if ~isnan(s.drogue_t)
         j = find(s.t >= s.drogue_t, 1);
         if ~isempty(j)

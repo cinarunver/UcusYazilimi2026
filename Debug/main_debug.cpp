@@ -229,9 +229,8 @@ SimpleKalmanFilter kf_ivmeZ(2.906, 9.982, 0.3884);
 SimpleKalmanFilter kf_gyroX(2.906, 9.982, 0.3884);
 SimpleKalmanFilter kf_gyroY(2.906, 9.982, 0.3884);
 SimpleKalmanFilter kf_gyroZ(2.906, 9.982, 0.3884);
-SimpleKalmanFilter kf_roll(2.906, 9.982, 0.3884);
-SimpleKalmanFilter kf_pitch(2.906, 9.982, 0.3884);
-SimpleKalmanFilter kf_yaw(2.906, 9.982, 0.3884);
+// Euler acilari (roll/pitch/yaw) icin Kalman YOKTUR — src/main.cpp ile ayni:
+// cevrimsel buyukluklerde skaler filtre sarma sinirinda bozulur. Detay: src/main.cpp
 // DIKKAT: e_mea'yi buyutmek filtreyi OLDURUR (K -> 0, irtifa donar). Gecmiste
 // 16.3 denendi -> irtifa -0.1'de dondu, apogee tetiklenmedi. Detay: src/main.cpp
 SimpleKalmanFilter kf_irtifa(1.5, 1.5, 0.1);
@@ -245,8 +244,9 @@ TinyGPSPlus gps;
 float ivmeX = 0.0, ivmeY = 0.0, ivmeZ = 0.0;
 float gyroX = 0.0, gyroY = 0.0, gyroZ = 0.0;
 float roll = 0.0, pitch = 0.0, yaw = 0.0;
+float qx = 0.0, qy = 0.0, qz = 0.0;   // yonelim quaternion — egim acisi bundan hesaplanir
 float irtifa = 0.0;
-float gpsEnlem = 0.0, gpsBoylam = 0.0;
+double gpsEnlem = 0.0, gpsBoylam = 0.0;   // float degil: ~42 cm kaybi (bkz. src/main.cpp)
 
 // --- TELEMETRİ YAPISI VE KUYRUK ---
 #pragma pack(push, 1)
@@ -257,7 +257,7 @@ struct TelemetryPacket {
     float irtifa;
     float dikeyHiz;
     float eglimAcisi;
-    float gpsEnlem, gpsBoylam;
+    double gpsEnlem, gpsBoylam;
     bool ayrilma1_durum;
     bool ayrilma2_durum;
     uint8_t ucus_durumu;
@@ -487,8 +487,16 @@ void sd_buffer_bosalt(File& file) {
 }
 
 // --- ÇERÇEVE KUR (AA 55 LEN payload CRC16) — tek yer, hem UART hem Serial kullanir ---
-// out[] en az sizeof(TelemetryPacket)+5 (=64) byte olmali. Kurulan cerceve uzunlugunu doner.
+// out[] en az sizeof(TelemetryPacket)+5 byte olmali. Kurulan cerceve uzunlugunu doner.
 // Ayrica DEBUG global son_frame/son_frame_len/son_crc guncellenir (hex dokumu icin).
+// Paket struct'i buyudugunde frame_buf SESSIZCE tasmasin diye derleme zamaninda
+// kontrol edilir (GPS float->double genislemesinde payload 8 B buyudu).
+#define UKB_FRAME_BUF_BOYU 80
+static_assert(sizeof(TelemetryPacket) + 5 <= UKB_FRAME_BUF_BOYU,
+              "TelemetryPacket buyudu: frame_buf tasar, UKB_FRAME_BUF_BOYU'yu artir");
+static_assert(sizeof(TelemetryPacket) <= 255,
+              "LEN alani tek bayt: payload 255 B'yi asamaz");
+
 size_t build_framed(const TelemetryPacket& pkt, uint8_t* out) {
     const uint8_t* payload = (const uint8_t*)&pkt;
     const size_t   len     = sizeof(TelemetryPacket);
@@ -512,7 +520,7 @@ size_t build_framed(const TelemetryPacket& pkt, uint8_t* out) {
 
 // --- ÇERÇEVELI PAKET GÖNDERME (DMA DESTEKLI UART / LoRa) ---
 void gonder_paket_framed_dma(uart_port_t uart_num, const TelemetryPacket& pkt) {
-    static uint8_t frame_buf[80];
+    static uint8_t frame_buf[UKB_FRAME_BUF_BOYU];
     size_t idx = build_framed(pkt, frame_buf);
     uart_write_bytes(uart_num, (const char*)frame_buf, idx);
 }
@@ -520,7 +528,7 @@ void gonder_paket_framed_dma(uart_port_t uart_num, const TelemetryPacket& pkt) {
 // --- ÇERÇEVELI PAKET GÖNDERME (USB SERIAL / UART0) ---
 // SERIAL_FRAMED_OUTPUT modunda cagrilir: ayni binary cerceveyi USB Serial'e basar.
 void gonder_paket_framed_serial(const TelemetryPacket& pkt) {
-    static uint8_t frame_buf[80];
+    static uint8_t frame_buf[UKB_FRAME_BUF_BOYU];
     size_t idx = build_framed(pkt, frame_buf);
     Serial.write(frame_buf, idx);
 }
@@ -676,19 +684,24 @@ void Task1code(void *pvParameters) {
     dbg.ham_yaw   = o.orientation.x;
     dbg.ham_roll  = o.orientation.y;
     dbg.ham_pitch = o.orientation.z;
-    yaw = kf_yaw.updateEstimate(o.orientation.x);
-    roll = kf_roll.updateEstimate(o.orientation.y);
-    pitch = kf_pitch.updateEstimate(o.orientation.z);
+    // Euler HAM alinir (filtrelenmez) — src/main.cpp ile ayni gerekce
+    yaw   = o.orientation.x;
+    roll  = o.orientation.y;
+    pitch = o.orientation.z;
+
+    // Egim acisi kuaterniyondan hesaplanacak (Euler sarmasina bagisik)
+    { imu::Quaternion q = bno.getQuat();
+      float sgn = (q.w() < 0.0f) ? -1.0f : 1.0f;
+      qx = sgn * q.x(); qy = sgn * q.y(); qz = sgn * q.z(); }
 
     // DEBUG: kalibrasyon her dongude okunur
     { uint8_t cs=0, cg=0, ca=0, cm=0;
       bno.getCalibration(&cs, &cg, &ca, &cm);
       dbg.cal_sys=cs; dbg.cal_gyro=cg; dbg.cal_accel=ca; dbg.cal_mag=cm; }
 
-    // Eğim açısı
-    float p_rad = pitch * DEG_TO_RAD;
-    float r_rad = roll * DEG_TO_RAD;
-    float cos_val = cos(p_rad) * cos(r_rad);
+    // Egim acisi — KUATERNIYONDAN (Euler'den DEGIL; src/main.cpp ile ayni).
+    // cos(egim) = R[2][2] = cos(pitch)*cos(roll) = 1 - 2*(qx^2 + qy^2)
+    float cos_val = 1.0f - 2.0f * (qx * qx + qy * qy);
     cos_val = constrain(cos_val, -1.0f, 1.0f);
     eglim_acisi = acos(cos_val) * RAD_TO_DEG;
 

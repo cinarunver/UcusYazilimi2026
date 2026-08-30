@@ -186,10 +186,14 @@ private:
 };
 
 // --- KALMAN FİLTRESİ NESNELERİ ---
-SimpleKalmanFilter kf_basinc(2.0, 2.0, 0.1);
+// kf_irtifa KALDIRILDI, kf_basinc yeniden ayarlandi — gorevyuku.cpp ile birebir.
+// irtifa artik FILTRELENMIS basinctan turetilir; eski (2.0, 2.0, 0.1) degeri gercek
+// sensor gurultusunun (~0.02 hPa) ~100 kati oldugu icin filtreyi dondurma riski
+// tasiyordu. Yeni degerler main.cpp'nin dogrulanmis irtifa filtresinin (1.5,1.5,0.1)
+// basinc domenine cevrilmis halidir (|dh/dP| ~ 8.43 m/hPa). Detay: GorevYukuYazilimi/gorevyuku.cpp
+SimpleKalmanFilter kf_basinc(0.178, 0.178, 0.0119);
 SimpleKalmanFilter kf_sicaklik(0.5, 0.5, 0.01);
 SimpleKalmanFilter kf_nem(1.0, 1.0, 0.1);
-SimpleKalmanFilter kf_irtifa(1.5, 1.5, 0.1);
 
 // --- SENSÖR NESNELERİ ---
 Adafruit_BME280 bme;
@@ -199,7 +203,7 @@ bool bnoOk = false;
 
 // --- SENSÖR VERİ DEĞİŞKENLERİ ---
 float basinc = 0.0, sicaklik = 0.0, nem = 0.0, irtifa = 0.0;
-float gpsEnlem = 0.0, gpsBoylam = 0.0;
+double gpsEnlem = 0.0, gpsBoylam = 0.0;   // float degil: ~42 cm kaybi (bkz. gorevyuku.cpp)
 
 // --- İNİŞ TESPİTİ DURUMU ---
 float max_irtifa = 0.0;
@@ -216,10 +220,10 @@ float anlik_dikey_hiz = 0.0;
 #pragma pack(push, 1)
 struct GorevYukuPaket {
   float basinc, sicaklik, nem, irtifa; // BME280
-  float gpsEnlem, gpsBoylam;           // GPS
+  double gpsEnlem, gpsBoylam;          // GPS — float degil (bkz. GPS notu)
   float ivmeX, ivmeY, ivmeZ;           // BNO055 lineer ivme (m/s^2)
   float gyroX, gyroY, gyroZ;           // BNO055 gyro (rad/s)
-}; // 48 byte
+}; // 56 byte (gps double'a genisletildi)
 #pragma pack(pop)
 
 // SD Kart Ping-Pong Buffer Tanımları
@@ -362,6 +366,15 @@ void sd_buffer_bosalt(File &file) {
 }
 
 // --- ÇERÇEVE KUR (AA 55 LEN payload CRC16) ---
+// Cerceve boyu = 2 SYNC + 1 LEN + payload + 2 CRC. Asagidaki frame_buf'lar bu
+// boyu tasiyabilmeli; paket struct'i buyudugunde SESSIZCE tasmasin diye derleme
+// zamaninda kontrol edilir. (GPS float->double genislemesinde 53 -> 61 B oldu.)
+#define GY_FRAME_BUF_BOYU 64
+static_assert(sizeof(GorevYukuPaket) + 5 <= GY_FRAME_BUF_BOYU,
+              "GorevYukuPaket buyudu: frame_buf tasar, GY_FRAME_BUF_BOYU'yu artir");
+static_assert(sizeof(GorevYukuPaket) <= 255,
+              "LEN alani tek bayt: payload 255 B'yi asamaz");
+
 size_t build_framed(const GorevYukuPaket &pkt, uint8_t *out) {
   const uint8_t *payload = (const uint8_t *)&pkt;
   const size_t len = sizeof(GorevYukuPaket);
@@ -385,14 +398,14 @@ size_t build_framed(const GorevYukuPaket &pkt, uint8_t *out) {
 
 // --- ÇERÇEVELI PAKET GÖNDERME (DMA DESTEKLI UART) ---
 void gonder_paket_framed_dma(uart_port_t uart_num, const GorevYukuPaket &pkt) {
-  static uint8_t frame_buf[64];
+  static uint8_t frame_buf[GY_FRAME_BUF_BOYU];
   size_t idx = build_framed(pkt, frame_buf);
   uart_write_bytes(uart_num, (const char *)frame_buf, idx);
 }
 
 // --- ÇERÇEVELI PAKET GÖNDERME (USB SERIAL / UART0) ---
 void gonder_paket_framed_serial(const GorevYukuPaket &pkt) {
-  static uint8_t frame_buf[64];
+  static uint8_t frame_buf[GY_FRAME_BUF_BOYU];
   size_t idx = build_framed(pkt, frame_buf);
   Serial.write(frame_buf, idx);
 }
@@ -548,7 +561,9 @@ void Task1code(void *pvParameters) {
     sicaklik = kf_sicaklik.updateEstimate(raw_temp);
     basinc = kf_basinc.updateEstimate(raw_pres);
     nem = kf_nem.updateEstimate(raw_hum);
-    irtifa = kf_irtifa.updateEstimate(raw_alt);
+    // irtifa AYRI filtrelenmez: filtrelenmis basinctan turetilir (gorevyuku.cpp ile ayni).
+    // raw_alt yalniz DEBUG karsilastirmasi icin okunmaya devam eder (dbg.ham_irtifa).
+    irtifa = 44330.0f * (1.0f - powf(basinc / referans_basinc, 0.1903f));
 
     // 2. GPS Verilerini Okuma
     while (Serial2.available() > 0) {

@@ -42,6 +42,33 @@ function test_mex()
     [gecen, kalan] = onay(c.durum == 0, ...
         'tek adimlik 25 m/s^2 kalkis uretmiyor (Kalman zayiflatmasi)', gecen, kalan);
 
+    % --- 3b) BULGU 6: kalkis tespiti eksen isaretine BAGISIK ---
+    %   Kosul artik bileske ivme. Ters isaretli Z ile de kalkis yakalanmali.
+    hal = ucus_mex('sifirla'); t = 1000000;
+    for i = 1:10, t = t + 10000; [hal, c] = adim(hal, 0, -40, 0, t); end
+    [gecen, kalan] = onay(c.durum == 1, ...
+        'ters Z ekseninde de kalkis yakalaniyor (Bulgu 6)', gecen, kalan);
+
+    %   ... ama rampa sarsintisi hala kalkis URETMEMELI.
+    hal = ucus_mex('sifirla'); t = 1000000;
+    for i = 1:50
+        t = t + 10000;
+        g = ucus_girdi(0, [1.5 -1.2 2.0], [0 0 0], [1 0 0 0], t, true, true);
+        [hal, c] = ucus_mex('adim', hal, g);
+    end
+    [gecen, kalan] = onay(c.durum == 0, ...
+        'rampa sarsintisi bileske esigi gecmiyor', gecen, kalan);
+
+    % --- 3c) BULGU 1: dusuk apogee'de ana parasut yine de aciliyor ---
+    %   Tepe 476 m (550'nin altinda): drogue ARANMAZ ama yedek tetik
+    %   (taban 200 m) ana parasutu acar. Eskiden ikisi de kilitliydi.
+    [hal, t] = ucus_baslat();
+    [hal, t] = oturt(hal, 476, 0, 5, t);
+    [~, ~, c] = oturt(hal, 300, 0, 5, t);
+    [gecen, kalan] = onay(c.durum == 3 && bitand(c.durum_bitleri, 32) == 0 && ...
+        bitand(c.durum_bitleri, 128) > 0, ...
+        'apogee 550 alti: drogue yok ama ana parasut acildi (Bulgu 1)', gecen, kalan);
+
     % --- 4) Apogee tam kosul: T && A && B && D ---
     [hal, t] = ucus_baslat();
     [hal, t] = oturt(hal, 600, 0, 5, t);
@@ -68,11 +95,22 @@ function test_mex()
         'rampada negatif irtifa: arama tabani (T) atesleme kesiyor', gecen, kalan);
 
     % --- 8) Arama tabani siniri: 550 gecilmeden apogee aranmaz ---
+    %   BULGU 1'den sonra: drogue hala aranmaz (bit5 sonuk) ama ana parasut
+    %   yedek tetikle acilir (bit7 yanar). Iki taban artik ayri.
     [hal, t] = ucus_baslat();
     [hal, t] = oturt(hal, 540, 0, 5, t);
     [~, ~, c] = oturt(hal, 500, 0, 5, t);
-    [gecen, kalan] = onay(c.durum == 1, ...
+    [gecen, kalan] = onay(bitand(c.durum_bitleri, 32) == 0, ...
         'taban altinda (540 m) apogee aranmadi', gecen, kalan);
+    [gecen, kalan] = onay(bitand(c.durum_bitleri, 128) > 0 && c.durum == 3, ...
+        '  ... ama ana parasut yedek tetikle acildi (Bulgu 1)', gecen, kalan);
+
+    % --- 8b) Yedek tetigin KENDI tabani: 200 m asilmadiysa atesleme yok ---
+    [hal, t] = ucus_baslat();
+    [hal, t] = oturt(hal, 150, 0, 5, t);
+    [~, ~, c] = oturt(hal, 50, 0, 5, t);
+    [gecen, kalan] = onay(bitand(c.durum_bitleri, 128) == 0, ...
+        'yedek taban altinda (150 m) atesleme yok', gecen, kalan);
 
     % --- 9) Ana parasut yedek tetigi: apogee kacti ama ana acildi ---
     [hal, t] = ucus_baslat();

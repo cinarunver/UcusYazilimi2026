@@ -52,6 +52,9 @@ void test_ayar_varsayilanlari(void) {
     TEST_ASSERT_FLOAT_WITHIN(1e-6f,  75.0f, a.max_eglim);
     TEST_ASSERT_FLOAT_WITHIN(1e-6f, 550.0f, a.apogee_min_irtifa);
     TEST_ASSERT_FLOAT_WITHIN(1e-6f, 550.0f, a.ayrilma2_mesafe);
+    // BULGU 1: yedek tetik tabani apogee arama tabanindan AYRI olmali.
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, 200.0f, a.yedek_tetik_taban);
+    TEST_ASSERT_TRUE(a.yedek_tetik_taban < a.apogee_min_irtifa);
     TEST_ASSERT_FLOAT_WITHIN(1e-6f,   2.0f, a.inis_hiz_esigi);
     TEST_ASSERT_FLOAT_WITHIN(1e-6f,  20.0f, a.inis_irtifa_esigi);
     TEST_ASSERT_FLOAT_WITHIN(1e-6f, 100.0f, a.durum_min_irtifa_esigi);
@@ -140,9 +143,10 @@ void test_dikey_hiz_dt_sifir_eski_hizi_korur(void) {
 //  DURUM MAKINESI — ucus_adim()
 // ============================================================================
 
-// Tek bir adim kosar. euler {roll,pitch,yaw}, kuat {qw,qx,qy,qz}.
-static UcusCikti adim(UcusHal& h, float irtifa, float az, float egim_derece,
-                      uint32_t t_us) {
+// Standart bir girdi kurar. euler {roll,pitch,yaw}, kuat {qw,qx,qy,qz}.
+// Ivme ekseni ayri ayarlanacaksa cagiran ham_ivme[] uzerinde oynar.
+static UcusGirdi girdi_yap(float irtifa, float az, float egim_derece,
+                           uint32_t t_us) {
     UcusGirdi g;
     g.ham_irtifa  = irtifa;
     g.ham_ivme[0] = 0.0f; g.ham_ivme[1] = 0.0f; g.ham_ivme[2] = az;
@@ -152,6 +156,13 @@ static UcusCikti adim(UcusHal& h, float irtifa, float az, float egim_derece,
     g.t_us     = t_us;
     g.sut_modu = true;          // egim EULER'den -> test kontrolu kolay
     g.filtrele = true;          // gercek ucus yolu: filtre zinciri devrede
+    return g;
+}
+
+// Tek bir adim kosar.
+static UcusCikti adim(UcusHal& h, float irtifa, float az, float egim_derece,
+                      uint32_t t_us) {
+    UcusGirdi g = girdi_yap(irtifa, az, egim_derece, t_us);
     UcusCikti c;
     ucus_adim(h, g, c);
     return c;
@@ -204,6 +215,49 @@ void test_sm_kalkis_tek_adim_esigi_gecmez(void) {
     TEST_ASSERT_EQUAL_INT(HAZIR, adim(h, 0.0f, 25.0f, 0.0f, t).durum);
 }
 
+/* BULGU 6 — kalkis tespiti artik EKSEN ISARETINE BAGISIK.
+
+   Eski kosul `ivme[2] > esik` idi. Z ekseni ters bagliysa ivme[2] hep
+   negatif okunur, kalkis hic yakalanmaz, durum HAZIR'da kalir, max_irtifa
+   0'da kalir ve `durum >= YUKSELIYOR` sarti yuzunden yedek tetik de
+   kilitlenirdi: tek bir eksen isareti IKI parasutu birden dusururdu.
+
+   Kosul bileske ivmeye cevrildi. Bu test o duzeltmenin bekcisidir. */
+void test_sm_kalkis_ters_z_ekseninde_de_yakalanir(void) {
+    UcusAyar a; UcusHal h; ucus_sifirla(h, a);
+    uint32_t t = 1000000u;
+    for (int i = 0; i < 10; i++) { t += 10000u; adim(h, 0.0f, -40.0f, 0.0f, t); }
+    TEST_ASSERT_EQUAL_INT(YUKSELIYOR, h.durum);
+}
+
+// Ayni bagisiklik yanal eksen icin de gecerli: hangi eksen roketin uzun
+// ekseni olursa olsun kalkis yakalanir.
+void test_sm_kalkis_yanal_eksende_de_yakalanir(void) {
+    UcusAyar a; UcusHal h; ucus_sifirla(h, a);
+    uint32_t t = 1000000u;
+    for (int i = 0; i < 10; i++) {
+        t += 10000u;
+        UcusGirdi g = girdi_yap(0.0f, 0.0f, 0.0f, t);
+        g.ham_ivme[0] = 40.0f; g.ham_ivme[2] = 0.0f;   // X ekseninde ivme
+        UcusCikti c; ucus_adim(h, g, c);
+    }
+    TEST_ASSERT_EQUAL_INT(YUKSELIYOR, h.durum);
+}
+
+// REGRESYON: bileske ivmeye gecmek rampada YANLIS kalkis uretmemeli.
+// BNO055 LINEARACCEL yercekimini cikardigi icin rampada bileske ~0'dir.
+void test_sm_kalkis_rampada_bileske_ivme_esigi_gecmez(void) {
+    UcusAyar a; UcusHal h; ucus_sifirla(h, a);
+    uint32_t t = 1000000u;
+    for (int i = 0; i < 50; i++) {
+        t += 10000u;
+        UcusGirdi g = girdi_yap(0.0f, 0.0f, 0.0f, t);
+        g.ham_ivme[0] = 1.5f; g.ham_ivme[1] = -1.2f; g.ham_ivme[2] = 2.0f;  // sarsinti
+        UcusCikti c; ucus_adim(h, g, c);
+    }
+    TEST_ASSERT_EQUAL_INT(HAZIR, h.durum);
+}
+
 // Apogee tam kosul: T && A && B && D saglanir -> drogue EMRI
 void test_sm_apogee_tam_kosul(void) {
     UcusAyar a; UcusHal h; ucus_sifirla(h, a);
@@ -249,15 +303,48 @@ void test_sm_apogee_rampada_negatif_irtifa_atesleme_yok(void) {
     TEST_ASSERT_FALSE(h.ayrilma1);
 }
 
-// Arama tabani siniri: 550 gecilmeden apogee ARANMAZ.
+/* Arama tabani siniri: 550 gecilmeden apogee ARANMAZ — ama BULGU 1'den
+   sonra ana parasut yine de acilir.
+
+   Iki taban artik ayri:
+     - apogee_min_irtifa (550 m) drogue'u bloke eder  -> DEGISMEDI
+     - yedek_tetik_taban (200 m) ana parasutu acar    -> YENI
+   Eskiden ikisi de 550'ydi ve 540 m'de tepe yapan bir ucus HICBIR parasut
+   acmadan yere carpiyordu. */
 void test_sm_apogee_arama_tabani_siniri(void) {
     UcusAyar a; UcusHal h; ucus_sifirla(h, a);
     uint32_t t = 1000000u;
     kalkis_yap(h, t);
     oturt(h, 540.0f, 0.0f, 5.0f, t);          // taban ALTINDA tepe
     UcusCikti c = oturt(h, 500.0f, 0.0f, 5.0f, t);
-    TEST_ASSERT_EQUAL_INT(YUKSELIYOR, c.durum);   // apogee aranmadi
+    TEST_ASSERT_FALSE(h.ayrilma1);            // drogue ARANMADI (arama tabani)
+    TEST_ASSERT_TRUE(h.ayrilma2);             // ama ana parasut ACILDI (yedek taban)
+    TEST_ASSERT_EQUAL_INT(INIS_2, c.durum);
+}
+
+/* BULGU 1 — dusuk apogee'li ucusta kurtarma. Motor erken sonup tepe 476 m'de
+   kalan senaryonun birim test karsiligi: eskiden 62 m/s ile yere carpiyordu. */
+void test_sm_yedek_ana_dusuk_apogee_kurtariyor(void) {
+    UcusAyar a; UcusHal h; ucus_sifirla(h, a);
+    uint32_t t = 1000000u;
+    kalkis_yap(h, t);
+    oturt(h, 476.0f, 0.0f, 5.0f, t);          // tepe: 550'nin ALTINDA
+    UcusCikti c = oturt(h, 300.0f, 0.0f, 5.0f, t);
     TEST_ASSERT_FALSE(h.ayrilma1);
+    TEST_ASSERT_TRUE(h.ayrilma2);
+    TEST_ASSERT_EQUAL_INT(INIS_2, c.durum);
+}
+
+/* Yedek tetigin KENDI tabani da bir kapi: 200 m asilmadiysa atesleme yok.
+   Bu irtifanin altinda ana parasut zaten sisemez. */
+void test_sm_yedek_ana_taban_altinda_atesleme_yok(void) {
+    UcusAyar a; UcusHal h; ucus_sifirla(h, a);
+    uint32_t t = 1000000u;
+    kalkis_yap(h, t);
+    oturt(h, 150.0f, 0.0f, 5.0f, t);          // tepe: yedek tabanin ALTINDA
+    oturt(h, 50.0f, 0.0f, 5.0f, t);
+    TEST_ASSERT_FALSE(h.ayrilma1);
+    TEST_ASSERT_FALSE(h.ayrilma2);
 }
 
 // INIS_1 -> INIS_2: ana parasut irtifasi
@@ -297,6 +384,31 @@ void test_sm_yedek_ana_yukselirken_atesleme_yok(void) {
         adim(h, irt, 0.0f, 120.0f, t);
     }
     TEST_ASSERT_FALSE(h.ayrilma2);
+}
+
+/* REGRESYON — YEDEK TETIK TABANINI DUSURMENIN YAN ETKISI.
+
+   Taban 550'den 200'e inince "iki sart ayni esikte" korumasi kayboldu:
+   200-550 m arasinda TIRMANIRKEN de `max_irtifa > taban` ve
+   `irtifa < ayrilma2_mesafe` ayni anda saglanir hale geldi. Geriye tek
+   koruma olarak dikey hiz kaldi; gurultulu baroda o yetmiyor ve ana parasut
+   tirmanista aciliyordu (simulasyonda apogee 3704 m yerine 324 m).
+
+   Alcalma teyidi (max_irtifa - irtifa > apogee_irtifa_farki) o korumayi
+   esikten bagimsiz bicimde geri koyar. Bu test onun bekcisidir: hiz esigi
+   YAPAY olarak saglanmis (yavas tirmanis) ama roket hala yukseliyor. */
+void test_sm_yedek_ana_yavas_tirmanista_da_atesleme_yok(void) {
+    UcusAyar a; UcusHal h; ucus_sifirla(h, a);
+    uint32_t t = 1000000u;
+    kalkis_yap(h, t);
+    // 250 -> 540 m arasi COK yavas tirmanis: dikey hiz esigin (3 m/s) altinda
+    // kalir, yani B kriteri surekli saglanir. Yalnizca alcalma teyidi keser.
+    for (float irt = 250.0f; irt <= 540.0f; irt += 0.5f) {
+        t += 10000u;
+        adim(h, irt, 0.0f, 5.0f, t);
+    }
+    TEST_ASSERT_FALSE(h.ayrilma2);
+    TEST_ASSERT_FALSE(h.ayrilma1);
 }
 
 // Rampada: kalkis olmadan (HAZIR) tetiklenmemeli.
@@ -374,13 +486,19 @@ int main(int, char**) {
     RUN_TEST(test_dikey_hiz_dt_sifir_eski_hizi_korur);
     RUN_TEST(test_sm_kalkis);
     RUN_TEST(test_sm_kalkis_tek_adim_esigi_gecmez);
+    RUN_TEST(test_sm_kalkis_ters_z_ekseninde_de_yakalanir);
+    RUN_TEST(test_sm_kalkis_yanal_eksende_de_yakalanir);
+    RUN_TEST(test_sm_kalkis_rampada_bileske_ivme_esigi_gecmez);
     RUN_TEST(test_sm_apogee_tam_kosul);
     RUN_TEST(test_sm_apogee_egim_engeller);
     RUN_TEST(test_sm_apogee_rampada_negatif_irtifa_atesleme_yok);
     RUN_TEST(test_sm_apogee_arama_tabani_siniri);
+    RUN_TEST(test_sm_yedek_ana_dusuk_apogee_kurtariyor);
+    RUN_TEST(test_sm_yedek_ana_taban_altinda_atesleme_yok);
     RUN_TEST(test_sm_inis1_ana_parasut);
     RUN_TEST(test_sm_yedek_ana_apogee_kacti);
     RUN_TEST(test_sm_yedek_ana_yukselirken_atesleme_yok);
+    RUN_TEST(test_sm_yedek_ana_yavas_tirmanista_da_atesleme_yok);
     RUN_TEST(test_sm_yedek_ana_rampada_atesleme_yok);
     RUN_TEST(test_sm_inis2_yere_inis);
     RUN_TEST(test_funye_emri_kenar_tek_sefer);

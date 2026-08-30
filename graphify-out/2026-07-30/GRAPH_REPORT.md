@@ -1,16 +1,16 @@
-# Graph Report - UcusYazilimi2026  (2026-07-22)
+# Graph Report - UcusYazilimi2026  (2026-07-30)
 
 ## Corpus Check
-- 39 files · ~54,842 words
+- 43 files · ~66,788 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 831 nodes · 934 edges · 116 communities (48 shown, 68 thin omitted)
+- 923 nodes · 1041 edges · 130 communities (62 shown, 68 thin omitted)
 - Extraction: 100% EXTRACTED · 0% INFERRED · 0% AMBIGUOUS
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `d1440edd`
+- Built from commit: `ca2fbe62`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -117,57 +117,70 @@
 - LED Durum Göstergesi Tasarımı
 - SimpleKalmanFilter
 - hesapla_led_durumu
-- gonder_paket_framed_dma
+- SİT-SUT.cpp
 - LED Durum Göstergesi Implementation Plan
-- TelemetryWire
+- Bilimsel Görev Yükü — Görev Tanımı ve Yazılım Yeterliliği
 - gorevyuku.cpp
 - GorevYukuWire
 - LoRa Paket Küçültme (Fixed-Point) — Tasarım
-- Global Constraints
 - SimpleKalmanFilter
+- Global Constraints
+- Haberleşme Testi — Veri Paketi Yapısı
+- SimpleKalmanFilter
+- gonder_paket_csv
 - gonder_paket_framed_dma
 - hesapla_led_durumu_bgy
+- Task1code
+- 14. Kurulum ve Çalıştırma
+- 4. Uçuş Algoritması ve Matematiksel Modeller
+- 7. SD Kart Kara Kutu Loglama
+- 8. SİT / SUT Entegrasyon Protokolü
+- 15. Dokümantasyon İndeksi
+- 2. Repo Yapısı ve Derleme Ortamları
+- 5. Bilimsel Görev Yükü (BGY)
+- 11. Donanım Altyapısı ve Pinout
+- 3. Sistem Mimarisi: Çift Çekirdek ve FreeRTOS
 
 ## God Nodes (most connected - your core abstractions)
 1. `DebugSnapshot` - 35 edges
 2. `DebugSnapshot` - 34 edges
-3. `TelemetryPacket` - 25 edges
+3. `TelemetryPacket` - 26 edges
 4. `TelemetryPacket` - 24 edges
-5. `TelemetryPacket` - 23 edges
-6. `TelemetryPacket` - 22 edges
-7. `GorevYukuPaket` - 19 edges
-8. `GorevYukuPaket` - 17 edges
-9. `TelemetryPacket` - 17 edges
-10. `TelemetryPacket` - 16 edges
+5. `GorevYukuPaket` - 24 edges
+6. `TelemetryPacket` - 23 edges
+7. `TelemetryPacket` - 22 edges
+8. `GorevYukuPaket` - 19 edges
+9. `🚀 Trakya Roket 2026 — Uçuş Yazılımı` - 18 edges
+10. `TelemetryPacket` - 17 edges
 
 ## Surprising Connections (you probably didn't know these)
-- `hesapla_led_durumu_bgy()` --references--> `LedDurumBgy`  [EXTRACTED]
-  GorevYukuYazilimi/gorevyuku.cpp → GorevYukuYazilimi/gorevyuku.cpp  _Bridges community 118 → community 109_
 - `bufferla_ve_yaz_sd()` --references--> `GorevYukuPaket`  [EXTRACTED]
-  GorevYukuYazilimi/gorevyuku.cpp → GorevYukuYazilimi/gorevyuku.cpp  _Bridges community 8 → community 117_
-- `pack_gorevyuku_wire()` --references--> `GorevYukuPaket`  [EXTRACTED]
   GorevYukuYazilimi/gorevyuku.cpp → GorevYukuYazilimi/gorevyuku.cpp  _Bridges community 8 → community 109_
 - `pack_gorevyuku_wire()` --references--> `GorevYukuWire`  [EXTRACTED]
   GorevYukuYazilimi/gorevyuku.cpp → GorevYukuYazilimi/gorevyuku.cpp  _Bridges community 110 → community 109_
-- `gonder_paket_framed_dma()` --calls--> `pack_gorevyuku_wire()`  [EXTRACTED]
-  GorevYukuYazilimi/gorevyuku.cpp → GorevYukuYazilimi/gorevyuku.cpp  _Bridges community 109 → community 117_
+- `setup()` --calls--> `led_uygula()`  [EXTRACTED]
+  GorevYukuYazilimi/gorevyuku.cpp → GorevYukuYazilimi/gorevyuku.cpp  _Bridges community 118 → community 109_
+- `Task1code()` --calls--> `led_uygula()`  [EXTRACTED]
+  GorevYukuYazilimi/gorevyuku.cpp → GorevYukuYazilimi/gorevyuku.cpp  _Bridges community 118 → community 119_
+- `gonder_paket_csv()` --references--> `TelemetryPacket`  [EXTRACTED]
+  SİT_SUT/SİT-SUT.cpp → SİT_SUT/SİT-SUT.cpp  _Bridges community 1 → community 116_
 
 ## Import Cycles
 - None detected.
 
-## Communities (116 total, 68 thin omitted)
+## Communities (130 total, 68 thin omitted)
 
 ### Community 0 - "Debug Firmware (main_debug)"
 Cohesion: 0.06
 Nodes (50): bufferla_ve_yaz_sd(), build_framed(), File, uart_port_t, crc16_ccitt(), dbg_append(), durum_adi(), Funye1Atesle() (+42 more)
 
 ### Community 1 - "SIT/SUT Reference Firmware"
-Cohesion: 0.06
-Nodes (48): HardwareSerial, Print, be32_to_float(), crc16_ccitt(), csv_alan(), float_to_be32(), Funye1Atesle(), Funye2Atesle() (+40 more)
+Cohesion: 0.10
+Nodes (21): TelemetryPacket, ayrilma1_durum, ayrilma2_durum, basinc, bmeSicaklik, dikeyHiz, eglimAcisi, gpsBoylam (+13 more)
 
 ### Community 2 - "Main Flight Firmware"
 Cohesion: 0.09
-Nodes (22): TelemetryPacket, ayrilma1_durum, ayrilma2_durum, dikeyHiz, eglimAcisi, gpsBoylam, gpsEnlem, gyroX (+14 more)
+Nodes (23): TelemetryPacket, ayrilma1_durum, ayrilma2_durum, dikeyHiz, eglimAcisi, gpsBoylam, gpsEnlem, gyroX (+15 more)
 
 ### Community 3 - "Payload Debug Firmware"
 Cohesion: 0.07
@@ -190,8 +203,8 @@ Cohesion: 0.07
 Nodes (27): hesapla_dikey_hiz(), logMesaj(), setup(), SimpleKalmanFilter, err_estimate, err_measure, first_run, kalman_gain (+19 more)
 
 ### Community 8 - "Payload Firmware (GorevYuku)"
-Cohesion: 0.14
-Nodes (14): GorevYukuPaket, basinc, gpsBoylam, gpsEnlem, gyroX, gyroY, gyroZ, irtifa (+6 more)
+Cohesion: 0.10
+Nodes (21): GorevYukuPaket, basinc, es, gpsBoylam, gpsEnlem, gyroX, gyroY, gyroZ (+13 more)
 
 ### Community 9 - "Flight Logic Unit Tests"
 Cohesion: 0.08
@@ -210,8 +223,8 @@ Cohesion: 0.16
 Nodes (10): baslikBas(), loop(), setup(), SimpleKalmanFilter, err_estimate, err_measure, first_run, kalman_gain (+2 more)
 
 ### Community 13 - "SitPaketi Struct (A)"
-Cohesion: 0.07
-Nodes (27): 1. Özet ve Tasarım Felsefesi, 2. Repo Yapısı ve Derleme Ortamları, 3. Sistem Mimarisi: Çift Çekirdek ve FreeRTOS, 4. Algoritmik Altyapı ve Matematiksel Modeller, 5. Haberleşme ve Veri İşleme Protokolleri, 6. SİT / SUT Entegrasyon Protokolü, 7. Hata Modları ve Etki Analizi (FMEA), 8. Donanım Altyapısı ve Pinout (+19 more)
+Cohesion: 0.25
+Nodes (8): 10. Hata Modları ve Etki Analizi (FMEA), 12. Yer İstasyonu (Ayrı Depo), 13. Doğrulama ve Test, 1. Özet ve Tasarım Felsefesi, 9. Güvenlik Tasarımı: Fünye Pin Yönetimi, 📋 İçindekiler, Mühendislik Tasarım Raporu ve Teknik Dokümantasyon, 🚀 Trakya Roket 2026 — Uçuş Yazılımı
 
 ### Community 14 - "SitPaketi Struct (B)"
 Cohesion: 0.15
@@ -278,80 +291,132 @@ Cohesion: 0.50
 Nodes (3): Donanım / SUT Doğrulama (manuel — commit sonrası), Notlar, Task 2: `main.cpp` entegrasyonu (led_uygula, sistem_hazir, LED yazımlarını merkezleştirme)
 
 ### Community 102 - "main.cpp"
-Cohesion: 0.21
-Nodes (14): float_to_be32(), Funye1Atesle(), Funye2Atesle(), funye_guncelle(), funye_pin_ates(), funye_pin_serbest(), gonder_durum_paketi(), gonder_sit_paketi() (+6 more)
+Cohesion: 0.06
+Nodes (52): be32_to_float(), bufferla_ve_yaz_sd(), File, uart_port_t, crc16_ccitt(), float_to_be32(), Funye1Atesle(), Funye2Atesle() (+44 more)
 
 ### Community 103 - "LED Durum Göstergesi Tasarımı"
 Cohesion: 0.17
 Nodes (11): 1. Tek merkezli LED kontrolü — `led_guncelle()`, 2. `sistem_hazir` bayrağı, Amaç, Durum Tablosu (Normal uçuş — MOD_BEKLEME), Girdiler (LED'ler yalnızca bunlara bağlı), LED Durum Göstergesi Tasarımı, LED Pinleri (mevcut, değişmiyor), Mod geçişi ile etkileşim (+3 more)
 
 ### Community 104 - "SimpleKalmanFilter"
-Cohesion: 0.25
-Nodes (7): SimpleKalmanFilter, err_estimate, err_measure, first_run, kalman_gain, last_estimate, q
+Cohesion: 0.22
+Nodes (9): Filtreleme Politikası, Genel Yaklaşım, Görev Yükü Paket Alanları (32 bayt faydalı yük, little-endian), Görev Yükü Çerçeve Bayt Yerleşimi, Hava Yoğunluğu Hesabı, Konum Belirleyici Sistemler ve Yer İstasyonu Veri Alışveriş Mimarisi, Konum Belirleyiciler, Mimari Diyagram (+1 more)
 
 ### Community 105 - "hesapla_led_durumu"
-Cohesion: 0.29
-Nodes (7): hesapla_led_durumu(), led_uygula(), LedDurum, led1, led2, led3, UcusDurumu
+Cohesion: 0.14
+Nodes (13): 1. Hava yoğunluğu (nemli hava), 2. Görev yükü wire paketi: 24B → 32B, 3. SD kart loglama, 4.1 Mevcut hata: roket paketi quaternion'ı Euler sanıyor, 4.2 Parse ve ölçekler, 4.3 Arayüz, 4. Yer istasyonu, Amaç (+5 more)
 
-### Community 106 - "gonder_paket_framed_dma"
+### Community 106 - "SİT-SUT.cpp"
 Cohesion: 0.29
-Nodes (8): be32_to_float(), bufferla_ve_yaz_sd(), File, uart_port_t, crc16_ccitt(), gonder_paket_framed_dma(), sd_buffer_bosalt(), Task2code()
+Nodes (12): float_to_be32(), Funye1Atesle(), Funye2Atesle(), funye_guncelle(), funye_pin_ates(), funye_pin_serbest(), gonder_durum_paketi(), gonder_sit_paketi() (+4 more)
 
 ### Community 107 - "LED Durum Göstergesi Implementation Plan"
 Cohesion: 0.29
 Nodes (6): Donanım / SUT Doğrulama (manuel — commit sonrası), Global Constraints, LED Durum Göstergesi Implementation Plan, Notlar, Task 1: Saf LED karar fonksiyonu + host birim testi, Task 2: `main.cpp` entegrasyonu (led_uygula, sistem_hazir, LED yazımlarını merkezleştirme)
 
-### Community 108 - "TelemetryWire"
-Cohesion: 0.14
-Nodes (14): pack_telemetry_wire(), q16(), q32(), TelemetryWire, dikeyHiz, durum, eglimAcisi, gpsBoylam (+6 more)
+### Community 108 - "Bilimsel Görev Yükü — Görev Tanımı ve Yazılım Yeterliliği"
+Cohesion: 0.15
+Nodes (13): 1. Bilimsel Görev Tanımı, 2.1 Ölçüm katmanı, 2.2 Filtreleme, 2.3 Yer kalibrasyonu, 2.4 Bilimsel çıktı: nemli hava yoğunluğu (F2), 2.5 Kayıt ve iletim ayrımı, 2. Görevi Yerine Getiren Yazılım Mimarisi, 3. Veri Ürünleri (+5 more)
 
 ### Community 109 - "gorevyuku.cpp"
-Cohesion: 0.23
-Nodes (12): beacon_guncelle(), hesapla_dikey_hiz(), hesapla_led_durumu_bgy(), led_uygula(), lora_konfigurasyon(), lora_log(), pack_gorevyuku_wire(), q16() (+4 more)
+Cohesion: 0.18
+Nodes (16): bufferla_ve_yaz_sd(), File, uart_port_t, crc16_ccitt(), gonder_paket_framed_dma(), log_dosyasi_sec(), lora_konfigurasyon(), lora_log() (+8 more)
 
 ### Community 110 - "GorevYukuWire"
-Cohesion: 0.18
-Nodes (11): GorevYukuWire, basinc, gpsBoylam, gpsEnlem, gyroX, gyroY, gyroZ, irtifa (+3 more)
+Cohesion: 0.13
+Nodes (15): GorevYukuWire, basinc, gpsBoylam, gpsEnlem, gyroX, gyroY, gyroZ, irtifa (+7 more)
 
 ### Community 111 - "LoRa Paket Küçültme (Fixed-Point) — Tasarım"
-Cohesion: 0.17
+Cohesion: 0.18
 Nodes (11): Doğrulanacak Varsayımlar, Gönderim Hızı, Kapsam Dışı (YAGNI), Kısıtlar, LoRa Paket Küçültme (Fixed-Point) — Tasarım, Mimari Karar, Problem, Test / Doğrulama (+3 more)
+
+### Community 112 - "SimpleKalmanFilter"
+Cohesion: 0.22
+Nodes (7): SimpleKalmanFilter, err_estimate, err_measure, first_run, kalman_gain, last_estimate, q
 
 ### Community 113 - "Global Constraints"
 Cohesion: 0.22
 Nodes (8): Global Constraints, LoRa Paket Küçültme (Fixed-Point) — Implementasyon Planı, Self-Review Notları, Task 1: Roket wire header + host test, Task 2: Roket wire'ı main.cpp'ye entegre et + gönderim hızı, Task 3: Görev yükü wire header + host test, Task 4: Görev yükü wire'ı gorevyuku.cpp'ye entegre et, Task 5: Yer istasyonu (Python) parse + simülasyon revizesi
 
+### Community 114 - "Haberleşme Testi — Veri Paketi Yapısı"
+Cohesion: 0.25
+Nodes (8): Filtreleme Politikası, Gönderim Kadansı ve Bant Genişliği, Haberleşme Testi — Veri Paketi Yapısı, Nihai Haberleşme Sistemi, Paket Alanları (23 bayt faydalı yük, little-endian), Veri Akış Diyagramı, Veri Paketi Tasarımı, Çerçeve Bayt Yerleşimi
+
 ### Community 115 - "SimpleKalmanFilter"
 Cohesion: 0.25
 Nodes (7): SimpleKalmanFilter, err_estimate, err_measure, first_run, kalman_gain, last_estimate, q
 
+### Community 116 - "gonder_paket_csv"
+Cohesion: 0.29
+Nodes (8): HardwareSerial, Print, be32_to_float(), crc16_ccitt(), csv_alan(), gonder_paket_csv(), gonder_paket_framed(), Task2code()
+
 ### Community 117 - "gonder_paket_framed_dma"
-Cohesion: 0.33
-Nodes (7): bufferla_ve_yaz_sd(), File, uart_port_t, crc16_ccitt(), gonder_paket_framed_dma(), sd_buffer_bosalt(), Task2code()
+Cohesion: 0.29
+Nodes (7): 6.1 İki katmanlı veri gösterimi, 6.2 UKB telemetri paketi — 23 B (`'<7h2iB'`), 6.3 BGY telemetri paketi — 32 B (`'<HhHhH2i7h'`), 6.4 Tasarım kararları, 6.5 Çerçeveleme ve bütünlük, 6.6 E32-433T30D otomatik konfigürasyon, 6. Haberleşme: Fixed-Point Wire Protokolü
 
 ### Community 118 - "hesapla_led_durumu_bgy"
+Cohesion: 0.29
+Nodes (7): hesapla_led_durumu_bgy(), led_uygula(), LedDurumBgy, beacon, led1, led2, led3
+
+### Community 119 - "Task1code"
+Cohesion: 0.33
+Nodes (5): beacon_guncelle(), hesapla_dikey_hiz(), hesapla_hava_yogunlugu(), Task1code(), tetens_es()
+
+### Community 121 - "14. Kurulum ve Çalıştırma"
 Cohesion: 0.40
-Nodes (5): LedDurumBgy, beacon, led1, led2, led3
+Nodes (5): 14.1 Kurulum, 14.2 SİT/SUT testi, 14.3 Yer istasyonu, 14.4 Uçuş öncesi zorunlu kontroller (pre-flight), 14. Kurulum ve Çalıştırma
+
+### Community 122 - "4. Uçuş Algoritması ve Matematiksel Modeller"
+Cohesion: 0.40
+Nodes (5): 4.1 Sensör füzyonu ve 1D Kalman filtreleri, 4.2 Anlık dikey hız (Vz) ve eğim açısı, 4.3 Apogee tespiti ve durum makinesi, 4.4 LED durum göstergesi, 4. Uçuş Algoritması ve Matematiksel Modeller
+
+### Community 123 - "7. SD Kart Kara Kutu Loglama"
+Cohesion: 0.40
+Nodes (5): 7.1 Ping-pong tampon, 7.2 Türkçe Excel uyumlu CSV, 7.3 Her uçuşta yeni dosya, 7.4 Kayıt kapsamı, 7. SD Kart Kara Kutu Loglama
+
+### Community 124 - "8. SİT / SUT Entegrasyon Protokolü"
+Cohesion: 0.40
+Nodes (5): 8.1 Fiziksel katman (Ek-7 Tablo 7), 8.2 ⚙️ Byte sırası: BIG ENDIAN (kritik), 8.3 Komut protokolü (5 byte), 8.4 Veri paketleri, 8. SİT / SUT Entegrasyon Protokolü
+
+### Community 125 - "15. Dokümantasyon İndeksi"
+Cohesion: 0.50
+Nodes (4): 15. Dokümantasyon İndeksi, Kod haritası, Mühendislik raporu bölümleri, Tasarım kararları (spec) ve uygulama planları
+
+### Community 126 - "2. Repo Yapısı ve Derleme Ortamları"
+Cohesion: 0.50
+Nodes (4): 2. Repo Yapısı ve Derleme Ortamları, Donanım doğrulama testleri, Teşhis firmware'leri, Uçuş firmware'leri
+
+### Community 127 - "5. Bilimsel Görev Yükü (BGY)"
+Cohesion: 0.50
+Nodes (4): 5.1 Nemli hava yoğunluğu (F2), 5.2 Yer kalibrasyonu, 5.3 Kurtarma beacon'ı, 5. Bilimsel Görev Yükü (BGY)
+
+### Community 128 - "11. Donanım Altyapısı ve Pinout"
+Cohesion: 0.67
+Nodes (3): 11.1 UKB — Uçuş Kontrol Bilgisayarı (`ucus`), 11.2 BGY — Bilimsel Görev Yükü (`gorevyuku`), 11. Donanım Altyapısı ve Pinout
+
+### Community 129 - "3. Sistem Mimarisi: Çift Çekirdek ve FreeRTOS"
+Cohesion: 0.67
+Nodes (3): 3. Sistem Mimarisi: Çift Çekirdek ve FreeRTOS, Gerçek zamanlama, Görev dağılımı
 
 ## Knowledge Gaps
-- **484 isolated node(s):** `err_measure`, `err_estimate`, `q`, `last_estimate`, `kalman_gain` (+479 more)
+- **551 isolated node(s):** `err_measure`, `err_estimate`, `q`, `last_estimate`, `kalman_gain` (+546 more)
   These have ≤1 connection - possible missing edges or undocumented components.
 - **68 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
+- **Why does `🚀 Trakya Roket 2026 — Uçuş Yazılımı` connect `SitPaketi Struct (A)` to `11. Donanım Altyapısı ve Pinout`, `3. Sistem Mimarisi: Çift Çekirdek ve FreeRTOS`, `gonder_paket_framed_dma`, `README.md`, `14. Kurulum ve Çalıştırma`, `4. Uçuş Algoritması ve Matematiksel Modeller`, `7. SD Kart Kara Kutu Loglama`, `8. SİT / SUT Entegrasyon Protokolü`, `15. Dokümantasyon İndeksi`, `2. Repo Yapısı ve Derleme Ortamları`, `5. Bilimsel Görev Yükü (BGY)`?**
+  _High betweenness centrality (0.017) - this node is a cross-community bridge._
 - **Why does `DebugSnapshot` connect `DebugSnapshot IMU Raw/Cal` to `Debug Firmware (main_debug)`?**
-  _High betweenness centrality (0.007) - this node is a cross-community bridge._
-- **Why does `DebugSnapshot` connect `DebugSnapshot Payload Sensors` to `Payload Debug Firmware`?**
   _High betweenness centrality (0.006) - this node is a cross-community bridge._
-- **Why does `TelemetryPacket` connect `Main Flight Firmware` to `gonder_paket_framed_dma`, `TelemetryWire`, `main.cpp`?**
+- **Why does `DebugSnapshot` connect `DebugSnapshot Payload Sensors` to `Payload Debug Firmware`?**
   _High betweenness centrality (0.005) - this node is a cross-community bridge._
 - **What connects `err_measure`, `err_estimate`, `q` to the rest of the system?**
-  _496 weakly-connected nodes found - possible documentation gaps or missing edges._
+  _563 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Debug Firmware (main_debug)` be split into smaller, more focused modules?**
   _Cohesion score 0.06009783368273934 - nodes in this community are weakly interconnected._
 - **Should `SIT/SUT Reference Firmware` be split into smaller, more focused modules?**
-  _Cohesion score 0.05505279034690799 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.09523809523809523 - nodes in this community are weakly interconnected._
 - **Should `Main Flight Firmware` be split into smaller, more focused modules?**
-  _Cohesion score 0.09090909090909091 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.08695652173913043 - nodes in this community are weakly interconnected._

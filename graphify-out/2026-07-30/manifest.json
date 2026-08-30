@@ -10,13 +10,13 @@
     "semantic_hash": ""
   },
   "FunyeAtesleyici/funye_atesleyici.cpp": {
-    "mtime": 1784710827.514504,
-    "ast_hash": "4cc3d57abb8c0de8e660d93b57a2fd89",
+    "mtime": 1784827757.6747634,
+    "ast_hash": "4c69cb57933c3fee358a40c0cf45b42d",
     "semantic_hash": ""
   },
   "GorevYukuYazilimi/gorevyuku.cpp": {
-    "mtime": 1784567959.6803792,
-    "ast_hash": "cc34ae5122ffeee14038709e531042bc",
+    "mtime": 1785413914.440371,
+    "ast_hash": "f9d57eb7c3aa71ac86881f92e5244d22",
     "semantic_hash": ""
   },
   "I2C_Test/i2c_test.cpp": {
@@ -75,8 +75,8 @@
     "semantic_hash": ""
   },
   "src/main.cpp": {
-    "mtime": 1784725495.4493318,
-    "ast_hash": "2537d99ae662a72006a6fb4e7f3b46a7",
+    "mtime": 1785358762.5088103,
+    "ast_hash": "82b84a0d2026c38d30591f7924124b92",
     "semantic_hash": ""
   },
   "test/test_ucus/test_main.cpp": {
@@ -150,8 +150,8 @@
     "semantic_hash": ""
   },
   "README.md": {
-    "mtime": 1783603484.5145757,
-    "ast_hash": "410d86c5901bf6c44c2ace60cef15913",
+    "mtime": 1785364685.8279033,
+    "ast_hash": "bb2da75c0778a7b6fa61efeb77d199f3",
     "semantic_hash": ""
   },
   "docs/superpowers/plans/2026-07-07-sit-sut-main-entegrasyon.md": {
@@ -192,6 +192,26 @@
   "docs/superpowers/specs/2026-07-11-lora-paket-kucultme-fixed-point-design.md": {
     "mtime": 1783790331.7433014,
     "ast_hash": "177589d0827c73675fcbffc43b089640",
+    "semantic_hash": ""
+  },
+  "docs/rapor-haberlesme-veri-paketi.md": {
+    "mtime": 1785175967.2543933,
+    "ast_hash": "1fe0a2f8160bcf6251fec6584a71c17e",
+    "semantic_hash": ""
+  },
+  "docs/rapor-konum-belirleyici-mimari.md": {
+    "mtime": 1785414141.5751085,
+    "ast_hash": "9474f1df4bfb2547bc11693bbb876eaa",
+    "semantic_hash": ""
+  },
+  "docs/superpowers/specs/2026-07-29-gorevyuku-hava-yogunlugu-ve-illustrasyon-design.md": {
+    "mtime": 1785358514.2492075,
+    "ast_hash": "45cc2194279169015dca4e3fc9a9a3d1",
+    "semantic_hash": ""
+  },
+  "docs/rapor-gorev-yuku-bilimsel-gorev-yazilim.md": {
+    "mtime": 1785414202.6089375,
+    "ast_hash": "afc561e343a9e7db3053bb12578c54ab",
     "semantic_hash": ""
   }
 }

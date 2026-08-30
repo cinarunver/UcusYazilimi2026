@@ -34,7 +34,7 @@ Kurtarma sistemi ve uçuş evresi bilgisi tek bir durum baytında bit alanları 
 | 6–7 | `qz` | int16 | ×10000 | **Ham** (BNO055 füzyon çıkışı) | Kuaterniyon z bileşeni |
 | 8–9 | `irtifa` | int16 | ×10 | **Kalman** (doğrudan) | m — barometrik irtifa |
 | 10–11 | `dikeyHiz` | int16 | ×10 | **Kalman** (dolaylı — türev) | m/s — dikey hız (+ yükseliş / − iniş) |
-| 12–13 | `eglimAcisi` | int16 | ×100 | **Kalman** (dolaylı — roll/pitch) | ° — düşeyden sapma açısı |
+| 12–13 | `eglimAcisi` | int16 | ×100 | Kuaterniyondan türetilir (filtresiz) | ° — düşeyden sapma açısı |
 | 14–17 | `gpsEnlem` | int32 | ×10⁷ | **Ham** (GPS çözümü) | ° — **konum bilgisi (zorunlu alan)** |
 | 18–21 | `gpsBoylam` | int32 | ×10⁷ | **Ham** (GPS çözümü) | ° — **konum bilgisi (zorunlu alan)** |
 | 22 | `durum` | uint8 | — | — (mantıksal bayrak) | bit0: Ayrılma-1, bit1: Ayrılma-2, bit2–4: uçuş evresi |
@@ -47,7 +47,15 @@ Pakette taşınan alanların bir kısmı Kalman filtresinden geçmiş, bir kısm
 
 **Doğrudan Kalman'lanan alanlar.** Barometrik irtifa, tek boyutlu ve gürültülü bir skaler ölçüm olduğundan doğrudan Kalman filtresinden geçirilir. İrtifa, apogee tespitinin ve dolayısıyla kurtarma sistemi tetiklemesinin temel girdisi olduğu için filtre parametreleri özellikle bu alan için ayrıca ayarlanmıştır. İvmeölçer ve jiroskopun üç ekseni de kendi bağımsız Kalman filtrelerinden geçirilir; havadan gönderilen bileşke ivme büyüklüğü, bu **filtrelenmiş** eksen değerlerinden hesaplanır.
 
-**Dolaylı olarak Kalman'lanan alanlar.** Dikey hız ve eğim açısı için ayrı bir filtre çalıştırılmaz; ancak her ikisi de girdisini filtrelenmiş büyüklüklerden aldığı için sonuç dolaylı olarak filtrelenmiş olur. Dikey hız, Kalman'dan geçmiş ardışık irtifa değerlerinin zamana göre farkı olarak hesaplanır — yani üzerine ikinci bir filtre uygulanmaz, gürültü bastırma tamamen irtifa filtresinden gelir. Eğim açısı ise Kalman'lanmış roll ve pitch açılarından türetilir. Bu türetmede, filtre çıkışındaki küçük sayısal taşmaların ters kosinüs fonksiyonunu tanımsız hale getirmemesi için değer aralığı ayrıca sınırlandırılmıştır.
+**Dikey hız.** Ayrı bir filtre çalıştırılmaz; Kalman'dan geçmiş ardışık irtifa değerlerinin zamana göre farkı olarak hesaplanır — üzerine ikinci bir filtre uygulanmaz, gürültü bastırma tamamen irtifa filtresinden gelir.
+
+**Eğim açısı.** Donanım modunda **kuaterniyondan** hesaplanır, Euler açılarından değil:
+
+`cos(eğim) = R[2][2] = cos(pitch)·cos(roll) = 1 − 2·(qx² + qy²)`
+
+İki ifade matematiksel olarak aynı büyüklüğü — gövde +Z ekseninin düşeyle yaptığı açıyı — verir; fark yalnızca kaynağın sağlamlığındadır. Euler açıları **çevrimseldir** (yaw 0–360°, pitch −180…+180°) ve skaler bir Kalman filtresinden geçirildiklerinde sarma sınırında bozulurlar: açı sınırdan atladığında filtre bunu gerçek bir hareket sanıp kestirimini tüm aralık boyunca sürükler. Ölçülen bozulma yaw'da tek örnekte ~170°, pitch kaynaklı eğim açısında ~49°'dir. Kuaterniyonda böyle bir sınır yoktur; ayrıca gimbal lock da oluşmaz. Bu nedenle Euler açıları artık **filtrelenmez** ve yalnızca SD kaydına yazılır. Sentetik Uçuş Testi (SUT) modunda gerçek kuaterniyon bulunmadığından (kimlik değer enjekte edilir) eğim açısı, yer istasyonunun gönderdiği roll/pitch değerlerinden hesaplanmaya devam eder. Her iki yolda da, sayısal taşmaların ters kosinüs fonksiyonunu tanımsız hale getirmemesi için değer aralığı sınırlandırılır.
+
+> **Kapsam notu.** Bu bozulma fünye güvenlik kapısını yanlışlıkla **açmaz**: yaw eğim açısı formülüne girmez, pitch kaynaklı sapma ise filtre kazancı yüksek olduğundan sıfır civarını tek adımda atlayarak eşiğin altına inmez. Etkilenen şey kaydedilen ve iletilen yönelim verisinin doğruluğudur.
 
 **Bilinçli olarak ham bırakılan alanlar.** Yönelim kuaterniyonunun bileşenleri **kasıtlı olarak filtrelenmez**. Kuaterniyon bileşenleri birbirinden bağımsız değildir; birim uzunluk kısıtıyla birbirine bağlıdır. Her bileşeni ayrı ayrı skaler bir Kalman filtresinden geçirmek bu kısıtı bozar ve fiziksel olarak geçersiz bir yönelim üretir. Bu nedenle kuaterniyon, BNO055'in kendi dahili sensör füzyon çıkışından alındığı haliyle — yalnızca işaret normalizasyonu uygulanarak — gönderilir. Zaten modülün kendi füzyon algoritması ivmeölçer, jiroskop ve manyetometreyi birleştirdiğinden, çıkış halihazırda filtrelenmiş bir kestirimdir. GPS enlem ve boylamı da ham iletilir: GPS alıcısı kendi içinde zaten konum çözümü üretmektedir ve kurtarma amaçlı konum verisinde yumuşatma yerine gerçek ölçümün korunması tercih edilmiştir.
 

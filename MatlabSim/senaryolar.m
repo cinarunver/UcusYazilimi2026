@@ -69,4 +69,22 @@ function S = senaryolar()
     S(i).p_deg   = struct();
     S(i).ariza   = struct('drogue_calismadi', true);
     S(i).bekleti = 'Drogue emri verilir ama acilmaz; ana parasut yine de acilmali';
+
+    i=i+1; S(i).ad     = 'IMU Z ekseni ters';
+    S(i).sinar   = 'kalkis tespitinin tekilligi';
+    S(i).p_deg   = struct();
+    S(i).ariza   = struct('imu_z_ters', true);
+    S(i).bekleti = 'Kalkis hic yakalanmaz -> max_irtifa 0 kalir -> yedek tetik de kilitli';
+
+    i=i+1; S(i).ad     = 'Referans basinc bayatlamasi (+25 m)';
+    S(i).sinar   = 'AYRILMA2_MESAFE mutlak irtifa dogrulugu';
+    S(i).p_deg   = struct();
+    S(i).ariza   = struct('baro_ofset', 25);
+    S(i).bekleti = 'Irtifa oldugundan yuksek okunur; ana parasut GERCEKTE daha alcakta acilir';
+
+    i=i+1; S(i).ad     = 'Asiri baro gurultusu (sigma 4 m)';
+    S(i).sinar   = 'Kriter A gurultu payi';
+    S(i).p_deg   = struct('baro_sigma', 4.0);
+    S(i).ariza   = struct();
+    S(i).bekleti = 'APOGEE_IRTIFA_FARKI 10 m; 4 m sigma yukseliste sahte dusus uretebilir';
 end

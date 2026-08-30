@@ -22,9 +22,18 @@ function R = monte_carlo(ayar, N, tohumlar)
     addpath(buradan, fullfile(buradan, 'config'));
     p0 = roket_params();
 
+    % ANA PARASUT ACILIS HIZI LIMITI [m/s].
+    % Model her parasutun her acilista SAGLAM kaldigini varsayar; yirtilmayi
+    % modellemez. Bu yuzden "indi mi?" tek basina basari olcusu DEGILDIR:
+    % drogue kacip ana parasut balistik hizda acilan kosumlarda simulasyon
+    % yumusak inis raporlar, gercek donanim raporlamaz. Nominal acilis
+    % 15-18 m/s; limit oranin kendisini degil, guvenli tarafi isaretler.
+    ANA_ACILIS_LIMIT = 30;
+
     apogee = zeros(N,1); drogue_z = zeros(N,1); gecikme = nan(N,1);
     ana_z  = nan(N,1);   inis = zeros(N,1);     surukl = zeros(N,1);
-    tilt_at = nan(N,1);  vz_at = nan(N,1);      basarili = false(N,1);
+    tilt_at = nan(N,1);  vz_at = nan(N,1);      ana_hiz = nan(N,1);
+    basarili = false(N,1);
 
     for i = 1:N
         p = ornekle(p0, tohumlar(i));
@@ -33,18 +42,22 @@ function R = monte_carlo(ayar, N, tohumlar)
         apogee(i) = s.apogee;  drogue_z(i) = s.drogue_z;
         gecikme(i)= s.apogee_gecikme;  ana_z(i) = s.ana_z;
         inis(i)   = s.inis_hizi;  surukl(i) = s.suruklenme;
+        ana_hiz(i)= s.ana_hiz;
 
         if ~isnan(s.drogue_emir_t)
             j = find(s.t >= s.drogue_emir_t, 1);
             if ~isempty(j), tilt_at(i) = s.tilt(j); vz_at(i) = s.vz(j); end
         end
-        basarili(i) = ~isnan(s.ana_t) && s.inis_hizi <= 10;
+        % GERCEKCI basari: indi + inis hizi makul + ana parasut hayatta
+        % kalabilecegi bir hizda acildi.
+        basarili(i) = ~isnan(s.ana_t) && s.inis_hizi <= 10 && ...
+                      s.ana_hiz <= ANA_ACILIS_LIMIT;
     end
 
     R.tablo = table(tohumlar(:), apogee, drogue_z, gecikme, ana_z, inis, ...
-                    surukl, tilt_at, vz_at, basarili, ...
+                    surukl, tilt_at, vz_at, ana_hiz, basarili, ...
         'VariableNames', {'Tohum','Apogee','DrogueZ','Gecikme','AnaZ','Inis', ...
-                          'Suruklenme','TiltAtes','VzAtes','Basarili'});
+                          'Suruklenme','TiltAtes','VzAtes','AnaHiz','Basarili'});
 
     % --- Sert kisit ihlalleri (tasarim dokumani §8.2) ---
     R.n              = N;
@@ -52,7 +65,13 @@ function R = monte_carlo(ayar, N, tohumlar)
     R.ana_kacirma    = sum(isnan(ana_z));
     R.hizli_inis     = sum(inis > 10);
     R.yukselirken    = sum(vz_at > 5);
+    R.ana_asiri_hiz  = sum(ana_hiz > ANA_ACILIS_LIMIT);
+    R.ana_hiz_limit  = ANA_ACILIS_LIMIT;
+    R.ana_hiz_p95    = prctile(ana_hiz(~isnan(ana_hiz)), 95);
     R.basari_orani   = mean(basarili);
+    % Eski (yaniltici) olcu: yalnizca "indi mi". Karsilastirma icin duruyor —
+    % aradaki fark, modelin parasut yirtilmasini gormemesinden gelir.
+    R.inis_orani     = mean(~isnan(ana_z) & inis <= 10);
 
     % --- Amac fonksiyonu terimleri (§8.3) ---
     g = gecikme(~isnan(gecikme));

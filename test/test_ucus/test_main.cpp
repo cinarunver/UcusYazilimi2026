@@ -51,10 +51,16 @@
 #define BME280_ID_VAL         0x60
 
 // --- UCUS ALGORITMASI SABITLERI (main.cpp ile senkron) ---
-#define APOGEE_IRTIFA_FARKI   15.0f
+#define APOGEE_IRTIFA_FARKI   10.0f
+// [ TODO ] Kriter C bandi — HENUZ KULLANILMIYOR, kriter apogee kosuluna bagli
+// degil. Deger tezgahta dogrulanip VE terimi olarak baglanacak; bkz. main.cpp
+// icindeki APOGEE_SERBEST_IVME notu.
+#define APOGEE_SERBEST_IVME      9.81f
+#define APOGEE_SERBEST_TOLERANS  2.5f
 #define AYRILMA2_MESAFE      550.0f
-#define MAX_EGLIM             10.0f
-#define MIN_DIKEY_HIZ          0.0f
+#define APOGEE_MIN_IRTIFA    AYRILMA2_MESAFE   // apogee arama tabani (main.cpp ile ayni)
+#define MAX_EGLIM             75.0f
+#define MIN_DIKEY_HIZ          3.0f
 #define KALKIS_IVME_ESIGI     20.0f
 #define INIS_HIZ_ESIGI         2.0f
 #define INIS_IRTIFA_ESIGI     20.0f
@@ -109,7 +115,7 @@ struct TelemetryPacket {
     float irtifa;
     float dikeyHiz;
     float eglimAcisi;
-    float gpsEnlem, gpsBoylam;
+    double gpsEnlem, gpsBoylam;   // main.cpp ile ayni: float degil (~42 cm kaybi)
     bool  ayrilma1_durum;
     bool  ayrilma2_durum;
     uint8_t ucus_durumu;
@@ -125,14 +131,36 @@ float hesapla_dikey_hiz_test(float onceki_irtifa, float guncel_irtifa,
     return (guncel_irtifa - onceki_irtifa) / dt;
 }
 
-// --- EGIM (TILT) ACISI (main.cpp ile birebir + NaN korumasi) ---
+// --- EGIM (TILT) ACISI ---
 static const float T_DEG_TO_RAD = M_PI / 180.0f;
 static const float T_RAD_TO_DEG = 180.0f / M_PI;
+
+// Euler tabanli surum. main.cpp'de ARTIK YALNIZ MOD_SUT'ta kullanilir (SUT'ta
+// gercek kuaterniyon yok, yer istasyonu sentetik roll/pitch gonderir).
 float hesapla_eglim_acisi(float pitch_deg, float roll_deg) {
     float cv = cosf(pitch_deg * T_DEG_TO_RAD) * cosf(roll_deg * T_DEG_TO_RAD);
     if (cv >  1.0f) cv =  1.0f;
     if (cv < -1.0f) cv = -1.0f;
     return acosf(cv) * T_RAD_TO_DEG;
+}
+
+// Kuaterniyon tabanli surum — DONANIM MODUNDA KULLANILAN YOL (main.cpp ile birebir).
+// cos(egim) = R[2][2] = cos(pitch)*cos(roll) = 1 - 2*(qx^2 + qy^2)
+float hesapla_eglim_acisi_quat(float qx, float qy) {
+    float cv = 1.0f - 2.0f * (qx * qx + qy * qy);
+    if (cv >  1.0f) cv =  1.0f;
+    if (cv < -1.0f) cv = -1.0f;
+    return acosf(cv) * T_RAD_TO_DEG;
+}
+
+// Test yardimcisi: ZYX Euler -> kuaterniyon (yalniz qx, qy dondurur; egim icin yeterli)
+void euler_to_quat_xy(float yaw_deg, float pitch_deg, float roll_deg,
+                      float* out_qx, float* out_qy) {
+    float cy = cosf(yaw_deg   * T_DEG_TO_RAD * 0.5f), sy = sinf(yaw_deg   * T_DEG_TO_RAD * 0.5f);
+    float cp = cosf(pitch_deg * T_DEG_TO_RAD * 0.5f), sp = sinf(pitch_deg * T_DEG_TO_RAD * 0.5f);
+    float cr = cosf(roll_deg  * T_DEG_TO_RAD * 0.5f), sr = sinf(roll_deg  * T_DEG_TO_RAD * 0.5f);
+    *out_qx = sr * cp * cy - cr * sp * sy;
+    *out_qy = cr * sp * cy + sr * cp * sy;
 }
 
 // --- CRC16-CCITT (main.cpp ile birebir) ---
@@ -260,10 +288,88 @@ void test_eglim_guvenlik_gecer(void) {
     TEST_ASSERT_TRUE(hesapla_eglim_acisi(2, 2) < MAX_EGLIM);
 }
 void test_eglim_tumbling_engeller(void) {
-    TEST_ASSERT_TRUE(hesapla_eglim_acisi(45, 0) >= MAX_EGLIM);
+    // 100 derece: esik 75, sinira oturmasin. 90 ustu = burun fiilen asagi.
+    TEST_ASSERT_TRUE(hesapla_eglim_acisi(100, 0) >= MAX_EGLIM);
 }
 void test_eglim_nan_uretmiyor(void) {
     TEST_ASSERT_FALSE(isnan(hesapla_eglim_acisi(180, 180)));
+}
+
+// --- KUATERNIYON TABANLI EGIM (donanim modundaki gercek yol) ---
+
+// Iki formul ayni buyuklugu vermeli: cos(p)cos(r) == 1 - 2(qx^2+qy^2)
+void test_eglim_quat_euler_ile_ayni(void) {
+    const float aci[][3] = {  // {yaw, pitch, roll}
+        {  0,   0,   0}, {  0,   2,   2}, { 30,  10,  -5},
+        {170,  45,   0}, {-90, -20,  15}, {200,  60,  30}
+    };
+    for (unsigned i = 0; i < sizeof(aci) / sizeof(aci[0]); i++) {
+        float qx, qy;
+        euler_to_quat_xy(aci[i][0], aci[i][1], aci[i][2], &qx, &qy);
+        TEST_ASSERT_FLOAT_WITHIN(0.05f,
+            hesapla_eglim_acisi(aci[i][1], aci[i][2]),
+            hesapla_eglim_acisi_quat(qx, qy));
+    }
+}
+
+void test_eglim_quat_dik_sifir(void) {
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 0.0f, hesapla_eglim_acisi_quat(0.0f, 0.0f));
+}
+
+void test_eglim_quat_tumbling_engeller(void) {
+    float qx, qy;
+    euler_to_quat_xy(0, 100, 0, &qx, &qy);  // 100: esik 75, sinira oturmasin
+    TEST_ASSERT_TRUE(hesapla_eglim_acisi_quat(qx, qy) >= MAX_EGLIM);
+}
+
+/* REGRESYON: cevrimsel (dairesel) aciyi skaler Kalman'dan gecirmek, sarma
+   sinirinda kestirimi bozar. yaw 0..360 arasinda sarar; donen bir rokette bu
+   HER TURDA yasanir. Filtre 357 -> 0 atlamasini -357'lik gercek bir hareket
+   sanip kestirimini tum aralik boyunca surukler.
+   OLCULEN: tek ornekte ~170 derecelik hata (esas olcum bozulmasi burada).
+   KAPSAM NOTU: yaw egim acisi formulune GIRMEZ, dolayisiyla bu bozulma funye
+   guvenlik kapisini etkilemez; bozdugu sey SD kaydi ve telemetri yonelimidir. */
+void test_euler_yaw_sarmasi_kaydi_bozuyor(void) {
+    SimpleKalmanFilter kf(2.906f, 9.982f, 0.3884f);
+    float en_buyuk_hata = 0.0f;
+    for (int i = 0; i < 200; i++) {
+        float gercek = fmodf(i * 3.0f, 360.0f);      // 3 derece/ornek -> 360'i sarar
+        float est    = kf.updateEstimate(gercek);
+        if (i > 5) {
+            float h = fabsf(fmodf(est - gercek + 540.0f, 360.0f) - 180.0f);  // dairesel fark
+            if (h > en_buyuk_hata) en_buyuk_hata = h;
+        }
+    }
+    TEST_ASSERT_TRUE(en_buyuk_hata > 45.0f);   // sarmada kestirim ciddi bozuluyor
+}
+
+/* REGRESYON: pitch de +-180'de sarar; sarma egim acisini ciddi bozar.
+   OLCULEN: gercek egim 179.9 iken filtre 130.6 gosterir (~49 derece hata).
+   ANCAK guvenlik esigi (MAX_EGLIM) ALTINA INMEZ — filtre kazanci yuksek
+   oldugundan sifir civarini tek adimda atlar. Yani bu hata funye kapisini
+   YANLISLIKLA ACMAZ; egim/yonelim degerini bozar. Kuaterniyon yolu bagisiktir. */
+void test_eglim_pitch_sarmasi_bozuyor_ama_kapiyi_acmiyor(void) {
+    SimpleKalmanFilter kf(2.906f, 9.982f, 0.3884f);
+    kf.updateEstimate(179.9f);                 // filtre yatik duruma oturur
+    for (int i = 0; i < 5; i++) kf.updateEstimate(179.9f);
+
+    float min_eglim = 999.0f, max_hata = 0.0f;
+    for (int i = 0; i < 40; i++) {             // sinir atlamasi: -179.9 beslenir
+        float p = kf.updateEstimate(-179.9f);
+        float e = hesapla_eglim_acisi(p, 0.0f);
+        if (e < min_eglim) min_eglim = e;
+        float h = fabsf(179.9f - e);
+        if (h > max_hata) max_hata = h;
+    }
+    TEST_ASSERT_TRUE(max_hata > 30.0f);        // egim degeri ciddi bozuluyor
+    TEST_ASSERT_TRUE(min_eglim >= MAX_EGLIM);  // ama guvenlik kapisi ACILMIYOR
+
+    // KUATERNIYON YOLU BAGISIK: yatik roket sarma boyunca yatik gorunur.
+    float qx, qy;
+    euler_to_quat_xy(0.0f, 179.9f, 0.0f, &qx, &qy);
+    TEST_ASSERT_TRUE(hesapla_eglim_acisi_quat(qx, qy) >= MAX_EGLIM);
+    euler_to_quat_xy(0.0f, -179.9f, 0.0f, &qx, &qy);
+    TEST_ASSERT_TRUE(hesapla_eglim_acisi_quat(qx, qy) >= MAX_EGLIM);
 }
 
 void test_packet_boyutu_59(void) {
@@ -312,23 +418,84 @@ void test_sm_kalkis(void) {
     if (25.0f > KALKIS_IVME_ESIGI) d = YUKSELIYOR;
     TEST_ASSERT_EQUAL_INT(YUKSELIYOR, d);
 }
+// Apogee atesleme karari — main.cpp ile ayni yapi: T && A && B && D.
+// Tek yerde tutuluyor ki esikler degistiginde tum testler birlikte kaysin.
+//
+// [ TODO — KRITER C EKLENINCE ] main.cpp'deki APOGEE_SERBEST_IVME notuna bak.
+// Ivme kriteri VE terimi olarak baglanacak; o zaman buraya `ivme` parametresi
+// eklenip su testler yazilacak: bant ici (apogee), bant disi motor yanarken,
+// bant disi rampada, ve kriterin mevcut A/B yolunu DARALTTIGININ dogrulanmasi.
+static bool apogee_karari(float maxi, float irt, float hiz, float eg) {
+    return (maxi > APOGEE_MIN_IRTIFA) &&              // T - arama tabani
+           (maxi - irt > APOGEE_IRTIFA_FARKI) &&      // A - irtifa farki
+           (hiz < MIN_DIKEY_HIZ) &&                   // B - yukselis bitti
+           (eg  < MAX_EGLIM);                         // D - atesleme izni
+}
 void test_sm_apogee_tam_kosul(void) {
-    UcusDurumu d = YUKSELIYOR; bool ayr = false;
-    float maxi = 600, irt = 580, hiz = -5, eg = 5;
-    if ((maxi-irt > APOGEE_IRTIFA_FARKI) && (hiz < MIN_DIKEY_HIZ) && (eg < MAX_EGLIM)) { ayr = true; d = INIS_1; }
-    TEST_ASSERT_EQUAL_INT(INIS_1, d); TEST_ASSERT_TRUE(ayr);
+    TEST_ASSERT_TRUE(apogee_karari(600, 580, -5, 5));
 }
 void test_sm_apogee_egim_engeller(void) {
-    UcusDurumu d = YUKSELIYOR; bool ayr = false;
-    float maxi = 600, irt = 580, hiz = -5, eg = 45;
-    if ((maxi-irt > APOGEE_IRTIFA_FARKI) && (hiz < MIN_DIKEY_HIZ) && (eg < MAX_EGLIM)) { ayr = true; d = INIS_1; }
-    TEST_ASSERT_EQUAL_INT(YUKSELIYOR, d); TEST_ASSERT_FALSE(ayr);
+    // 100 derece: burun fiilen asagi donmus. 45 ARTIK ENGELLENMIYOR (esik 75).
+    TEST_ASSERT_FALSE(apogee_karari(600, 580, -5, 100));
+    TEST_ASSERT_TRUE (apogee_karari(600, 580, -5,  45));
+}
+// Hiz esigi 3 m/s: apogee civarinda hafif POZITIF hizda da apogee sayilmali
+// (gurultu isareti cevirebilir). Eskiden kati `hiz < 0` sarti bunu bloke ederdi.
+void test_sm_apogee_hafif_pozitif_hiz_gecer(void) {
+    TEST_ASSERT_TRUE(apogee_karari(600, 580, 1.0f, 5));
+}
+// KORUMA: max_irtifa tek basinc sicramasiyla yanlis yuksege kilitlenirse A
+// kalici true olur; yukselisi engelleyen son kapi hiz esigidir. 3 m/s bunu
+// hala bloke etmeli — yukseliste hiz onlarca/yuzlerce m/s'dir.
+void test_sm_apogee_yukseliste_atesleme_yok(void) {
+    TEST_ASSERT_FALSE(apogee_karari(700, 400, 120.0f, 5));   // maxi bozuk, roket yukseliyor
+}
+/* REGRESYON: RAMPADA ATESLEME.
+   max_irtifa_degeri 0.0'dan baslar ve kalkista irtifaya esitlenmez. Basinc
+   referansi setup()'ta olculdugu icin sonradan basinc yukselirse ya da kart
+   padden yuksek bir yerde acilip asagi tasinirsa irtifa NEGATIF okur.
+   O zaman A saglanir (0 - (-20) = 20 > 15), hiz padde ~0 oldugu icin B de
+   saglanir, roket rampada dik oldugu icin D de saglanir — drogue RAMPADA
+   acilirdi. Arama tabani (T) bunu keser: max_irtifa o anda ~0'dir. */
+void test_sm_apogee_rampada_negatif_irtifa_atesleme_yok(void) {
+    TEST_ASSERT_TRUE (600 - 580 > APOGEE_IRTIFA_FARKI);        // A mantigi saglam
+    TEST_ASSERT_FALSE(apogee_karari(0.0f, -20.0f, 0.0f, 0.0f)); // ama T kesiyor
+}
+// Taban tam sinirda: 550 gecilmeden apogee aranmaz, gecilince aranir.
+void test_sm_apogee_arama_tabani_siniri(void) {
+    TEST_ASSERT_FALSE(apogee_karari(540, 500, -5, 5));   // taban altinda
+    TEST_ASSERT_TRUE (apogee_karari(560, 500, -5, 5));   // taban ustunde
 }
 void test_sm_inis1_ana_parasut(void) {
     UcusDurumu d = INIS_1; bool ayr = false;
     float irt = 400, maxi = 700;
     if ((irt < AYRILMA2_MESAFE) && (maxi > AYRILMA2_MESAFE)) { ayr = true; d = INIS_2; }
     TEST_ASSERT_EQUAL_INT(INIS_2, d); TEST_ASSERT_TRUE(ayr);
+}
+// --- ANA PARASUT YEDEK TETIGI (durum makinesinden bagimsiz) ---
+// Apogee kacirilirsa INIS_1'e hic girilmez; yedek tetik ana parasutu yine acar.
+static bool yedek_ana_tetik(bool ayrilma2, UcusDurumu d, float maxi, float irt, float hiz) {
+    return (!ayrilma2) && (d >= YUKSELIYOR) &&
+           (maxi > AYRILMA2_MESAFE) && (irt < AYRILMA2_MESAFE) && (hiz < MIN_DIKEY_HIZ);
+}
+void test_sm_yedek_ana_apogee_kacti(void) {
+    // Apogee hic yakalanmadi: durum hala YUKSELIYOR, roket 700 m'den 400 m'ye dustu
+    TEST_ASSERT_TRUE(yedek_ana_tetik(false, YUKSELIYOR, 700.0f, 400.0f, -30.0f));
+}
+void test_sm_yedek_ana_yukselirken_atesleme(void) {
+    // Esigi yukari gecerken max_irtifa da irtifayla birlikte artar -> tetiklenmez
+    TEST_ASSERT_FALSE(yedek_ana_tetik(false, YUKSELIYOR, 400.0f, 400.0f, 120.0f));
+    TEST_ASSERT_FALSE(yedek_ana_tetik(false, YUKSELIYOR, 600.0f, 600.0f, 100.0f));
+}
+void test_sm_yedek_ana_cift_atesleme_yok(void) {
+    // ayrilma2 mandali set ise blok bir daha tetiklemez (funye2_aktif 400 ms'de
+    // temizlendigi icin mandal olarak O kullanilamaz)
+    TEST_ASSERT_FALSE(yedek_ana_tetik(true, INIS_2, 700.0f, 400.0f, -30.0f));
+}
+void test_sm_yedek_ana_rampada_atesleme(void) {
+    // Kalkis olmadan (HAZIR) ve esigi hic asmadan tetiklenmemeli
+    TEST_ASSERT_FALSE(yedek_ana_tetik(false, HAZIR, 0.0f, 0.0f, 0.0f));
+    TEST_ASSERT_FALSE(yedek_ana_tetik(false, YUKSELIYOR, 300.0f, 100.0f, -5.0f));
 }
 void test_sm_inis2_yere_inis(void) {
     UcusDurumu d = INIS_2;
@@ -485,6 +652,11 @@ void setup() {
     RUN_TEST(test_eglim_guvenlik_gecer);
     RUN_TEST(test_eglim_tumbling_engeller);
     RUN_TEST(test_eglim_nan_uretmiyor);
+    RUN_TEST(test_eglim_quat_euler_ile_ayni);
+    RUN_TEST(test_eglim_quat_dik_sifir);
+    RUN_TEST(test_eglim_quat_tumbling_engeller);
+    RUN_TEST(test_euler_yaw_sarmasi_kaydi_bozuyor);
+    RUN_TEST(test_eglim_pitch_sarmasi_bozuyor_ama_kapiyi_acmiyor);
     RUN_TEST(test_packet_boyutu_59);
     RUN_TEST(test_packet_padding_yok);
     RUN_TEST(test_crc16_bilinen_vektor);
@@ -495,7 +667,15 @@ void setup() {
     RUN_TEST(test_sm_kalkis);
     RUN_TEST(test_sm_apogee_tam_kosul);
     RUN_TEST(test_sm_apogee_egim_engeller);
+    RUN_TEST(test_sm_apogee_hafif_pozitif_hiz_gecer);
+    RUN_TEST(test_sm_apogee_yukseliste_atesleme_yok);
+    RUN_TEST(test_sm_apogee_rampada_negatif_irtifa_atesleme_yok);
+    RUN_TEST(test_sm_apogee_arama_tabani_siniri);
     RUN_TEST(test_sm_inis1_ana_parasut);
+    RUN_TEST(test_sm_yedek_ana_apogee_kacti);
+    RUN_TEST(test_sm_yedek_ana_yukselirken_atesleme);
+    RUN_TEST(test_sm_yedek_ana_cift_atesleme_yok);
+    RUN_TEST(test_sm_yedek_ana_rampada_atesleme);
     RUN_TEST(test_sm_inis2_yere_inis);
 
     // --- [B] DONANIM (GERCEK KART) ---

@@ -25,12 +25,14 @@ flowchart LR
         BME["BME280<br/>basınç • sıcaklık • nem • irtifa"]
         BNO["BNO055<br/>ivme • jiroskop • kuaterniyon"]
         GPS["GY-NEO-7M<br/>enlem • boylam"]
-        KF{"Kalman<br/>her büyüklük ayrı filtre"}
+        KF{"Kalman<br/>skaler alanlar<br/>her biri ayrı filtre"}
+        RAW["HAM geçiş<br/>konum • kuaterniyon"]
         RHO["**F2** Nemli hava yoğunluğu<br/>Tetens + kısmi basınçlar"]
         LAND["İniş tespiti<br/>baro + IMU durgunluk"]
         BME --> KF
-        BNO --> KF
-        GPS --> KF
+        BNO -->|"ivme • jiroskop"| KF
+        BNO -->|"kuaterniyon"| RAW
+        GPS --> RAW
         KF --> RHO
         KF --> LAND
     end
@@ -38,6 +40,7 @@ flowchart LR
     Q(["FreeRTOS Kuyruğu<br/>(bloklamaz — kuyruk doluysa atla)"])
     RHO --> Q
     KF --> Q
+    RAW --> Q
 
     subgraph C1["ÇEKİRDEK 1 — DAĞITIM"]
         direction TB
@@ -65,9 +68,11 @@ BNO055 atalet ölçüm birimi IMU füzyon modunda (`OPERATION_MODE_IMUPLUS`) ba�
 
 ### 2.2 Filtreleme
 
-Havadan iletilen **her** büyüklük Kalman filtresinden geçer; pakete hiçbir ham ölçüm doğrudan yazılmaz. Her büyüklük kendi bağımsız filtresine sahiptir ve parametreleri o büyüklüğün fiziksel değişim hızına göre ayrı ayarlanmıştır: en yavaş değişen büyüklük olan sıcaklık en dar belirsizlikle, iniş sırasında hızlı değişen irtifa daha gevşek parametrelerle çalışır.
+Filtreleme kararı **alan bazında** verilir: bir büyüklük ancak skaler Kalman filtresinin varsayımlarını karşılıyorsa — tek boyutlu, diğer alanlardan bağımsız, gürültülü ve sensör tarafından dahili olarak filtrelenmemiş bir ölçümse — filtreden geçirilir. Basınç, sıcaklık, bağıl nem ile ivme ve jiroskop eksenleri bu koşulu sağlar; her biri kendi bağımsız filtresine sahiptir.
 
-Konum verisi özel bir yaklaşım gerektirir. Kalman filtresi doğrudan derece cinsinden uygulandığında ardışık kestirim farkları (10⁻⁵ derece ≈ 1,1 m) süreç gürültüsünü besleyemeyecek kadar küçük kalır, kazanç söner ve **filtre ilk konum çözümünde donar.** Bu nedenle ilk geçerli çözüm referans alınır, filtreleme metre mertebesine ölçeklenmiş bir domende yapılır ve çıkış tekrar dereceye çevrilir; ayrıca filtre yalnızca yeni bir konum çözümü geldiğinde güncellenir. Ayrıntı için bkz. [Konum Belirleyici Mimari](rapor-konum-belirleyici-mimari.md).
+**Barometrik irtifa ayrıca filtrelenmez, filtrelenmiş basınçtan türetilir.** Basınç ve irtifa aynı fiziksel büyüklüğün iki görünümü olduğundan ikisini bağımsız filtrelemek, birbiriyle tutarsız iki alan üretiyordu — yerde `basinc`'ten `irtifa`'yı geri türetmek mümkün değildi. Bu değişiklik basınç filtresinin yeniden ayarlanmasını gerektirdi; önceki ölçüm belirsizliği gerçek sensör gürültüsünün ~100 katı olduğundan kazancı söndürüp filtreyi dondurma riski taşıyordu. Yeni değerler, roket kartında sahada doğrulanmış irtifa filtresinin basınç domenine çevrilmiş halidir. Ayrıntı için bkz. [Konum Belirleyici Mimari](rapor-konum-belirleyici-mimari.md).
+
+**Konum (enlem/boylam) ve yönelim kuaterniyonu bu koşulu sağlamaz ve kasıtlı olarak ham iletilir.** GPS alıcısı ile BNO055'in her ikisi de kendi dahili kestirim/füzyon çözümünü ürettiğinden çıkışları zaten filtrelidir; üzerlerine ikinci bir filtre koymak yeni bilgi katmaz, yalnızca gecikme bindirir. Bunun ötesinde konum için kullanılacak skaler filtrenin durum vektöründe hız bulunmadığından gerçek hareketi gürültü sayarak bastırır ve hıza orantılı gecikme üretir; kuaterniyon bileşenleri ise birim uzunluk kısıtıyla birbirine bağlı olduğundan ayrı ayrı filtrelenmeleri fiziksel olarak geçersiz bir yönelim üretir. Kurtarma amaçlı konum verisinde belirleyici ölçüt yumuşaklık değil doğruluktur. Ayrıntı için bkz. [Konum Belirleyici Mimari](rapor-konum-belirleyici-mimari.md).
 
 ### 2.3 Yer kalibrasyonu
 
